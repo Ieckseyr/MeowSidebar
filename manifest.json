@@ -1,0 +1,7 @@
+{
+    "name": "MeowSidebar",
+    "entry": "MeowSidebar.dll",
+    "version": "1.0.0",
+    "type": "native",
+    "description": "MeowSidebar C++ - Sidebar display + PAPI registry with CoralFans builtins"
+}

@@ -1,0 +1,10 @@
+{
+    mtimes = {
+        ["xmake.lua"] = 1782393499,
+        ["..\\MeowPAPI\\xmake.lua"] = 1782390850
+    },
+    recheck = false,
+    options = {
+        mode = "release"
+    }
+}

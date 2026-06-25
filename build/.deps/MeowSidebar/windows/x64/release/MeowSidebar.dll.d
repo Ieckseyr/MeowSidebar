@@ -1,0 +1,39 @@
+{
+    values = {
+        [[D:\VS\VS\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\link.exe]],
+        {
+            "-nologo",
+            "-machine:x64",
+            [[-libpath:build\.prelink\lib]],
+            [[-libpath:build\windows\x64\release]],
+            [[-libpath:C:\Users\MCMin\AppData\Local\.xmake\packages\l\levilamina\26.10.3\bb7759c3863a4d80a1a0d972e1b6473d\lib]],
+            [[-libpath:C:\Users\MCMin\AppData\Local\.xmake\packages\f\fmt\11.2.0\ee1902dd7cff4195a287949f80dbce70\lib]],
+            [[-libpath:C:\Users\MCMin\AppData\Local\.xmake\packages\l\leveldb\1.23\2532d000dc9d47cbb618c80ba0e6d806\lib]],
+            [[-libpath:C:\Users\MCMin\AppData\Local\.xmake\packages\s\snappy\1.2.2\b3244272357b4994abb43dc0aa939d28\lib]],
+            [[-libpath:C:\Users\MCMin\AppData\Local\.xmake\packages\s\symbolprovider\v1.2.0\716edebcb0f14dbbbc97a0d6aa352593\lib]],
+            [[-libpath:C:\Users\MCMin\AppData\Local\.xmake\packages\l\legacyremotecall\main\0c60ce77dbe34c6a92c2718bf0205f88\lib]],
+            "/opt:ref",
+            "/opt:icf",
+            "bedrock_runtime_api.lib",
+            "MeowPAPI.lib",
+            "LeviLamina.lib",
+            "fmt.lib",
+            "leveldb.lib",
+            "snappy.lib",
+            "SymbolProvider.lib",
+            "LegacyRemoteCall.lib",
+            "/DELAYLOAD:bedrock_runtime.dll"
+        }
+    },
+    files = {
+        [[build\.objs\MeowSidebar\windows\x64\release\src\MeowSidebar.cpp.obj]],
+        [[build\.objs\MeowSidebar\windows\x64\release\src\Config.cpp.obj]],
+        [[build\.objs\MeowSidebar\windows\x64\release\src\SidebarManager.cpp.obj]],
+        [[build\.objs\MeowSidebar\windows\x64\release\src\PlayerConfigManager.cpp.obj]],
+        [[build\.objs\MeowSidebar\windows\x64\release\src\DataMigrator.cpp.obj]],
+        [[build\.objs\MeowSidebar\windows\x64\release\src\CommandRegistration.cpp.obj]],
+        [[build\.objs\MeowSidebar\windows\x64\release\src\EventRegistration.cpp.obj]],
+        [[build\.objs\MeowSidebar\windows\x64\release\src\MemoryOperators.cpp.obj]],
+        [[build\windows\x64\release\MeowPAPI.lib]]
+    }
+}

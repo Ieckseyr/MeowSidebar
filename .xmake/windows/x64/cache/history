@@ -1,0 +1,12 @@
+{
+    cmdlines = {
+        "xmake build MeowSidebar",
+        [[xmake lua "C:\\\\Program Files\\\\xmake\\\\modules\\\\private\\\\utils\\\\statistics.lua"]],
+        "xmake build MeowSidebar",
+        "xmake build MeowSidebar",
+        "xmake f -m release",
+        "xmake build MeowSidebar",
+        "xmake build MeowSidebar",
+        "xmake build MeowSidebar"
+    }
+}
