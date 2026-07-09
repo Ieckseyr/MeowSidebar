@@ -1,0 +1,34 @@
+{
+    "data": [
+        "§e#§d#§b#§g#个§e人§d信§b息§e#§d#§b#§g#",
+        "§e你好,§g{pl.realName}",
+        "§g血量: §c{pl.health}/§f{pl.maxHealth}",
+        "§g饥饿: §e{pl.hunger}",
+        "§g坐标: §b{pl.pos}",
+        "§g维度: §a{pl.dimName}",
+        "§g等级: §d{pl.expLevel}",
+        "§e#§d#§b#§g#服§e务§d器§b信§e息§d#§b#§g#",
+        "§g在线: §a{server_online}§g/§e{server_max_players}",
+        "§gTPS: §a{server_tps}",
+        "§gMSPT: §e{server_mspt}"
+    ],
+    "default_show_sidebar": false,
+    "hz": 1500,
+    "title": [
+        "§1§g",
+        [
+            "|",
+            "/",
+            "-",
+            "\\"
+        ],
+        "§5欢迎您加入! §g",
+        [
+            "|",
+            "/",
+            "-",
+            "\\"
+        ]
+    ],
+    "title_refresh_interval": -1
+}

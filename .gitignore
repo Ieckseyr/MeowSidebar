@@ -1,0 +1,27 @@
+# Build artifacts
+.xmake/
+build/
+bin/
+*.dll
+*.pdb
+*.lib
+*.exp
+*.obj
+*.obj.d
+*.dll.d
+*.lib.d
+
+# Runtime data
+players/
+.migrated
+
+# Non-source docs (Chinese)
+实现文档.md
+论坛发布文档.md
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+*.user
+Thumbs.db
