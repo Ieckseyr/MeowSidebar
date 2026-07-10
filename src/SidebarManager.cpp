@@ -329,8 +329,18 @@ void SidebarManager::processPlayer(Player* player) {
         return;
     }
 
-    // 发送侧边栏数据包
-    sendSidebarPackets(player, title, uniqueLines);
+    // 获取上一次发送的行（用于移除旧行，避免动态内容变化时行数累加）
+    std::vector<std::string> oldLines;
+    {
+        std::lock_guard<std::mutex> lock(mStateMutex);
+        auto it = mPlayerStates.find(xuid);
+        if (it != mPlayerStates.end() && it->second.active) {
+            oldLines = it->second.lines;
+        }
+    }
+
+    // 发送侧边栏数据包（先移除旧行，再添加新行）
+    sendSidebarPackets(player, title, uniqueLines, oldLines);
 
     // 更新状态
     {
@@ -345,7 +355,8 @@ void SidebarManager::processPlayer(Player* player) {
 void SidebarManager::sendSidebarPackets(
     Player* player,
     std::string const& title,
-    std::vector<std::string> const& lines
+    std::vector<std::string> const& lines,
+    std::vector<std::string> const& oldLines
 ) {
     if (!player || lines.empty()) return;
 
@@ -360,7 +371,26 @@ void SidebarManager::sendSidebarPackets(
         );
         player->sendNetworkPacket(displayPkt);
 
-        // 2. 构造 SetScorePacket (Change) - 设置每行的分数
+        // 2. 移除上一次发送的行（避免动态内容变化时行数累加）
+        // 当行内容（如坐标）变化时，旧内容对应的 fake player 行不会自动消失，
+        // 必须先发送 Remove 类型的 SetScorePacket 清理旧行。
+        if (!oldLines.empty()) {
+            std::vector<ScorePacketInfo> removeInfos;
+            removeInfos.reserve(oldLines.size());
+            for (auto const& oldLine : oldLines) {
+                ScorePacketInfo info;
+                info.mScoreboardId->mRawID = makeScoreboardId(oldLine);
+                info.mObjectiveName = std::string(SIDEBAR_OBJECTIVE);
+                removeInfos.push_back(std::move(info));
+            }
+            // change() 静态方法构造包后，修改 mType 为 Remove
+            // SetScorePacket::write 会根据 mType 决定写入字段（Remove 只需 id 和 objective）
+            SetScorePacket removePkt = SetScorePacket::change(std::move(removeInfos));
+            removePkt.mType = ScorePacketType::Remove;
+            player->sendNetworkPacket(removePkt);
+        }
+
+        // 3. 构造 SetScorePacket (Change) - 设置每行的分数
         std::vector<ScorePacketInfo> scoreInfos;
         scoreInfos.reserve(lines.size());
 
