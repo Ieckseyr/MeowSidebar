@@ -12,79 +12,90 @@
 
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/level/Level.h"
-#include "mc/network/Packet.h"
-#include "mc/network/MinecraftPacketIds.h"
-#include "mc/deps/core/utility/BinaryStream.h"
-#include "mc/deps/core/utility/ReadOnlyBinaryStream.h"
-#include "mc/platform/Result.h"
-#include "mc/network/packet/SetScorePacket.h"
-#include "mc/network/packet/ScorePacketInfo.h"
-#include "mc/network/packet/ScorePacketType.h"
-#include "mc/world/scores/IdentityDefinition.h"
+#include "mc/network/NetworkSystem.h"
+#include "mc/network/NetworkPeer.h"
+#include "mc/network/Compressibility.h"
 #include "mc/world/scores/ObjectiveSortOrder.h"
-#include "mc/world/scores/ScoreboardId.h"
-#include "mc/world/scores/PlayerScoreboardId.h"
-#include "mc/legacy/ActorUniqueID.h"
 
 #include <algorithm>
 #include <cstring>
 
-// ===== 自定义数据包 =====
-// SetDisplayObjectivePacketPayload 的构造函数未从 bedrock_server.dll 导出，
-// 无法直接构造 SetDisplayObjectivePacket。
-// 解决方案：继承 ::Packet，手动通过 BinaryStream 写入协议字段。
-// MCBE 协议 SetDisplayObjective (ID 107) 格式：
-//   string: displaySlotName, string: objectiveName, string: displayName,
-//   string: criteriaName, varint: sortOrder
-class MeowSetDisplayObjectivePacket : public ::Packet {
-public:
-    std::string mSlot;
-    std::string mObjName;
-    std::string mDisplayName;
-    std::string mCriteria;
-    int         mOrder;
+// ===== 原始字节流数据包构造 =====
+// 自定义 ::Packet 子类并 override write() 在 BDS 中不可靠：write() 被调用时
+// BinaryStream 可能已包含同一批次中前一个数据包（如 UpdateBlock）的字节，
+// 导致我们的包体被追加到旧数据之后，且包头 ID 取自前一个包（21=UpdateBlock
+// 而非 107=SetDisplayObjective）。
+// 解决方案：手动构造完整数据包字节流（包头 VarUInt + 包体），通过
+// NetworkPeer::sendPacket 直接发送原始字节，绕过 ::Packet 基类。
+// 参考实现：MeowLib 的 ProtocolPacketWriter。
 
-    MeowSetDisplayObjectivePacket(
-        std::string slot, std::string obj, std::string display, std::string crit, int order
-    ) : mSlot(std::move(slot)),
-        mObjName(std::move(obj)),
-        mDisplayName(std::move(display)),
-        mCriteria(std::move(crit)),
-        mOrder(order) {}
+namespace {
 
-    ::MinecraftPacketIds getId() const override { return ::MinecraftPacketIds::SetDisplayObjective; }
-
-    ::std::string_view getName() const override { return "MeowSetDisplayObjective"; }
-
-    void write(::BinaryStream& stream) const override {
-        stream.writeString(mSlot, nullptr, nullptr);
-        stream.writeString(mObjName, nullptr, nullptr);
-        stream.writeString(mDisplayName, nullptr, nullptr);
-        stream.writeString(mCriteria, nullptr, nullptr);
-        stream.writeVarInt(mOrder, nullptr, nullptr);
+// 写入无符号 VarUInt（小端基128变长编码）
+void writeUnsignedVarInt(std::string& buf, uint32_t value) {
+    while (value >= 0x80) {
+        buf.push_back(static_cast<char>((value & 0x7F) | 0x80));
+        value >>= 7;
     }
+    buf.push_back(static_cast<char>(value));
+}
 
-    ::Bedrock::Result<void> _read(::ReadOnlyBinaryStream&) override { return {}; }
-};
+// 写入有符号 VarInt（ZigZag 编码后再用 VarUInt 编码）
+void writeVarInt(std::string& buf, int32_t value) {
+    uint32_t zz = (static_cast<uint32_t>(value) << 1) ^ static_cast<uint32_t>(value >> 31);
+    writeUnsignedVarInt(buf, zz);
+}
 
-// MCBE 协议 RemoveObjective (ID 106) 格式：
-//   string: objectiveName
-class MeowRemoveObjectivePacket : public ::Packet {
-public:
-    std::string mObjName;
+// 写入字符串（VarUInt 长度 + 原始字节）
+void writeString(std::string& buf, std::string const& str) {
+    writeUnsignedVarInt(buf, static_cast<uint32_t>(str.size()));
+    buf.append(str);
+}
 
-    explicit MeowRemoveObjectivePacket(std::string obj) : mObjName(std::move(obj)) {}
+// 写入单个字节
+void writeByte(std::string& buf, uint8_t value) {
+    buf.push_back(static_cast<char>(value));
+}
 
-    ::MinecraftPacketIds getId() const override { return ::MinecraftPacketIds::RemoveObjective; }
-
-    ::std::string_view getName() const override { return "MeowRemoveObjective"; }
-
-    void write(::BinaryStream& stream) const override {
-        stream.writeString(mObjName, nullptr, nullptr);
+// 写入有符号 VarInt64（ZigZag 编码后再用 VarUInt 编码）
+void writeVarInt64(std::string& buf, int64_t value) {
+    uint64_t zz = (static_cast<uint64_t>(value) << 1) ^ static_cast<uint64_t>(value >> 63);
+    while (zz >= 0x80) {
+        buf.push_back(static_cast<char>((zz & 0x7F) | 0x80));
+        zz >>= 7;
     }
+    buf.push_back(static_cast<char>(zz));
+}
 
-    ::Bedrock::Result<void> _read(::ReadOnlyBinaryStream&) override { return {}; }
-};
+// 写入有符号 32 位整数（4 字节小端，Protocol-v944 writeSignedInt）
+void writeSignedInt32(std::string& buf, int32_t value) {
+    buf.push_back(static_cast<char>(value & 0xFF));
+    buf.push_back(static_cast<char>((value >> 8) & 0xFF));
+    buf.push_back(static_cast<char>((value >> 16) & 0xFF));
+    buf.push_back(static_cast<char>((value >> 24) & 0xFF));
+}
+
+// MCBE 数据包头 ID（与协议 wire ID 一致）
+constexpr uint32_t PKT_ID_SET_DISPLAY_OBJECTIVE = 107; // SetDisplayObjective
+constexpr uint32_t PKT_ID_REMOVE_OBJECTIVE      = 106; // RemoveObjective
+constexpr uint32_t PKT_ID_SET_SCORE             = 108; // SetScore
+
+// 通过 NetworkPeer 直接发送原始字节流
+bool sendRawPacket(Player* player, std::string const& data) {
+    if (!player || data.empty()) return false;
+    auto networkSystem = ll::service::getNetworkSystem();
+    if (!networkSystem.has_value()) return false;
+    auto* peer = networkSystem->getPeerForUser(player->getNetworkIdentifier());
+    if (!peer) return false;
+    peer->sendPacket(
+        data,
+        NetworkPeer::Reliability::ReliableOrdered,
+        Compressibility::Compressible
+    );
+    return true;
+}
+
+} // anonymous namespace
 
 namespace meowsidebar {
 
@@ -329,8 +340,22 @@ void SidebarManager::processPlayer(Player* player) {
         return;
     }
 
-    // 发送侧边栏数据包
-    sendSidebarPackets(player, title, uniqueLines);
+    // 获取旧状态（用于增量更新，移除已不存在的旧条目）
+    std::string oldTitle;
+    std::vector<std::string> oldLines;
+    bool wasActive = false;
+    {
+        std::lock_guard<std::mutex> lock(mStateMutex);
+        auto it = mPlayerStates.find(xuid);
+        if (it != mPlayerStates.end()) {
+            oldTitle  = it->second.title;
+            oldLines  = it->second.lines;
+            wasActive = it->second.active;
+        }
+    }
+
+    // 发送侧边栏数据包（带旧状态进行增量更新）
+    sendSidebarPackets(player, title, uniqueLines, oldTitle, oldLines, wasActive);
 
     // 更新状态
     {
@@ -345,50 +370,105 @@ void SidebarManager::processPlayer(Player* player) {
 void SidebarManager::sendSidebarPackets(
     Player* player,
     std::string const& title,
-    std::vector<std::string> const& lines
+    std::vector<std::string> const& lines,
+    std::string const& oldTitle,
+    std::vector<std::string> const& oldLines,
+    bool wasActive
 ) {
     if (!player || lines.empty()) return;
 
     try {
-        // 1. 发送自定义 SetDisplayObjective 数据包 - 设置标题和显示槽位
-        MeowSetDisplayObjectivePacket displayPkt(
-            SIDEBAR_SLOT,
-            SIDEBAR_OBJECTIVE,
-            title,
-            DUMMY_CRITERIA,
-            static_cast<int>(ObjectiveSortOrder::Ascending)
-        );
-        player->sendNetworkPacket(displayPkt);
+        bool titleChanged = (title != oldTitle) || !wasActive;
 
-        // 2. 构造 SetScorePacket (Change) - 设置每行的分数
-        std::vector<ScorePacketInfo> scoreInfos;
-        scoreInfos.reserve(lines.size());
+        if (titleChanged) {
+            // ===== 标题变更或首次显示：完全重建 =====
+            // 1. 移除旧 objective（清除所有旧分数条目，防止残留）
+            if (wasActive) {
+                std::string removePkt;
+                writeUnsignedVarInt(removePkt, PKT_ID_REMOVE_OBJECTIVE);
+                writeString(removePkt, SIDEBAR_OBJECTIVE);
+                sendRawPacket(player, removePkt);
+            }
 
-        for (int i = 0; i < static_cast<int>(lines.size()); i++) {
-            ScorePacketInfo info;
-            // ScoreboardId 基于 fake player 名的哈希
-            // mScoreboardId 是 TypedStorageImpl<8,16,ScoreboardId>，需用 -> 访问内部成员
-            info.mScoreboardId->mRawID = makeScoreboardId(lines[i]);
-            info.mScoreboardId->mIdentityDef = nullptr;
-            info.mObjectiveName = std::string(SIDEBAR_OBJECTIVE);
-            info.mScoreValue = i + 1;  // 1, 2, 3, ... (升序，行1在顶部)
-            info.mIdentityType = IdentityDefinition::Type::FakePlayer;
-            info.mFakePlayerName = lines[i];
-            scoreInfos.push_back(std::move(info));
+            // 2. 创建新 objective
+            std::string displayPkt;
+            writeUnsignedVarInt(displayPkt, PKT_ID_SET_DISPLAY_OBJECTIVE);
+            writeString(displayPkt, SIDEBAR_SLOT);
+            writeString(displayPkt, SIDEBAR_OBJECTIVE);
+            writeString(displayPkt, title);
+            writeString(displayPkt, DUMMY_CRITERIA);
+            writeVarInt(displayPkt, static_cast<int32_t>(ObjectiveSortOrder::Ascending));
+            sendRawPacket(player, displayPkt);
+
+            // 3. 添加所有新条目
+            std::string scorePkt;
+            writeUnsignedVarInt(scorePkt, PKT_ID_SET_SCORE);
+            writeByte(scorePkt, 0);  // type: 0 = Change
+            writeUnsignedVarInt(scorePkt, static_cast<uint32_t>(lines.size()));
+            for (int i = 0; i < static_cast<int>(lines.size()); i++) {
+                writeVarInt64(scorePkt, makeScoreboardId(lines[i]));
+                writeString(scorePkt, SIDEBAR_OBJECTIVE);
+                writeSignedInt32(scorePkt, i + 1);
+                writeByte(scorePkt, 3);  // identityType: 3 = FakePlayer
+                writeString(scorePkt, lines[i]);
+            }
+            sendRawPacket(player, scorePkt);
+        } else {
+            // ===== 标题未变：增量更新（避免闪烁，仅更新变化的条目）=====
+
+            // 1. 移除不再存在的旧条目
+            //    SetScore(Remove) 格式: VarUInt(108) + byte(1=Remove) + VarUInt count
+            //    + 每条: VarInt64 scoreboardId + string objName + writeSignedInt scoreValue
+            //    注意: Remove 类型也必须写入 scoreValue（Protocol-v944 规范），
+            //          但不写 identityType 和 fakePlayerName
+            std::unordered_set<std::string> newLineSet(lines.begin(), lines.end());
+            std::vector<std::string> toRemove;
+            toRemove.reserve(oldLines.size());
+            for (auto const& oldLine : oldLines) {
+                if (newLineSet.find(oldLine) == newLineSet.end()) {
+                    toRemove.push_back(oldLine);
+                }
+            }
+
+            if (!toRemove.empty()) {
+                std::string removeScorePkt;
+                writeUnsignedVarInt(removeScorePkt, PKT_ID_SET_SCORE);
+                writeByte(removeScorePkt, 1);  // type: 1 = Remove
+                writeUnsignedVarInt(removeScorePkt, static_cast<uint32_t>(toRemove.size()));
+                for (auto const& line : toRemove) {
+                    writeVarInt64(removeScorePkt, makeScoreboardId(line));
+                    writeString(removeScorePkt, SIDEBAR_OBJECTIVE);
+                    writeSignedInt32(removeScorePkt, 0);  // scoreValue: Remove 时被忽略，但必须写入
+                }
+                sendRawPacket(player, removeScorePkt);
+            }
+
+            // 2. 添加/更新所有新条目
+            std::string scorePkt;
+            writeUnsignedVarInt(scorePkt, PKT_ID_SET_SCORE);
+            writeByte(scorePkt, 0);  // type: 0 = Change
+            writeUnsignedVarInt(scorePkt, static_cast<uint32_t>(lines.size()));
+            for (int i = 0; i < static_cast<int>(lines.size()); i++) {
+                writeVarInt64(scorePkt, makeScoreboardId(lines[i]));
+                writeString(scorePkt, SIDEBAR_OBJECTIVE);
+                writeSignedInt32(scorePkt, i + 1);
+                writeByte(scorePkt, 3);  // identityType: 3 = FakePlayer
+                writeString(scorePkt, lines[i]);
+            }
+            sendRawPacket(player, scorePkt);
         }
-
-        SetScorePacket scorePkt = SetScorePacket::change(std::move(scoreInfos));
-        player->sendNetworkPacket(scorePkt);
-
     } catch (...) {}
 }
 
 void SidebarManager::sendRemoveSidebarPackets(Player* player) {
     if (!player) return;
     try {
-        // 发送 RemoveObjective 数据包清除侧边栏
-        MeowRemoveObjectivePacket removePkt(SIDEBAR_OBJECTIVE);
-        player->sendNetworkPacket(removePkt);
+        // 构造 RemoveObjective 原始字节流（ID 106）
+        // 格式: VarUInt(106) + string objectiveName
+        std::string removePkt;
+        writeUnsignedVarInt(removePkt, PKT_ID_REMOVE_OBJECTIVE);
+        writeString(removePkt, SIDEBAR_OBJECTIVE);
+        sendRawPacket(player, removePkt);
     } catch (...) {}
 }
 

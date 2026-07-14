@@ -15,9 +15,8 @@ bin/
 players/
 .migrated
 
-# Non-source docs (Chinese)
-实现文档.md
-论坛发布文档.md
+# Documentation
+*.md
 
 # IDE / OS
 .vs/

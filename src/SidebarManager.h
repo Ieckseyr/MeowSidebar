@@ -63,10 +63,14 @@ private:
     bool shouldShowSidebar(Player* player) const;
 
     // 发送侧边栏数据包给玩家
+    // oldTitle/oldLines/wasActive 用于增量更新（移除旧条目，避免内容残留）
     void sendSidebarPackets(
         Player* player,
         std::string const& title,
-        std::vector<std::string> const& lines
+        std::vector<std::string> const& lines,
+        std::string const& oldTitle,
+        std::vector<std::string> const& oldLines,
+        bool wasActive
     );
 
     // 清除玩家的侧边栏（发送空包）

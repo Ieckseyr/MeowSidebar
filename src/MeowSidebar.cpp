@@ -8,12 +8,107 @@
 #include "meowpapi/PlaceholderApi.h"
 #include "meowpapi/Builtins.h"
 #include "meowpapi/RemoteCallBridge.h"
+#include "meowpapi/RemoteCallAPI.h"
 #include "meowpapi/BepApiBridge.h"
 
 #include "ll/api/event/EventBus.h"
 #include "ll/api/mod/RegisterHelper.h"
+#include "ll/api/service/Bedrock.h"
+
+#include <mc/world/level/Level.h>
+#include <mc/world/actor/player/Player.h>
+
+#include <nlohmann/json.hpp>
 
 namespace meowsidebar {
+
+// ===== MeowSidebar 命名空间 RemoteCall 导出 =====
+// ZXDash 等外部插件通过 RemoteCall::hasFunc("MeowSidebar", "reloadConfig") 检测本插件，
+// 并通过 importAs 调用以下函数管理侧边栏。
+// 导出命名空间为 "MeowSidebar"（与 MeowPAPI 命名空间区分）。
+static constexpr const char* SIDEBAR_NS = "MeowSidebar";
+
+static void exportSidebarRemoteCallApi() {
+    // reloadConfig — 重载配置（ZXDash 用于检测 + 管理）
+    RemoteCall::exportAs(SIDEBAR_NS, "reloadConfig", []() -> bool {
+        SidebarManager::getInstance().reloadConfig();
+        return true;
+    });
+
+    // getPlayerLines — 获取玩家自定义行（返回 JSON 数组字符串）
+    RemoteCall::exportAs(SIDEBAR_NS, "getPlayerLines", [](std::string const& xuid) -> std::string {
+        auto lines = PlayerConfigManager::getInstance().getLines(xuid);
+        nlohmann::json j = nlohmann::json::array();
+        for (auto const& l : lines) j.push_back(l);
+        return j.dump();
+    });
+
+    // addPlayerLine — 添加自定义行
+    RemoteCall::exportAs(SIDEBAR_NS, "addPlayerLine", [](std::string const& xuid, std::string const& line) -> bool {
+        return PlayerConfigManager::getInstance().addLine(xuid, line);
+    });
+
+    // getPlayerLineCount — 获取自定义行数
+    RemoteCall::exportAs(SIDEBAR_NS, "getPlayerLineCount", [](std::string const& xuid) -> int {
+        return PlayerConfigManager::getInstance().getLineCount(xuid);
+    });
+
+    // refreshPlayerByXuid — 通过 XUID 刷新指定玩家的侧边栏
+    RemoteCall::exportAs(SIDEBAR_NS, "refreshPlayerByXuid", [](std::string const& xuid) -> bool {
+        auto lvl = ll::service::getLevel();
+        if (!lvl) return false;
+        auto* player = lvl->getPlayerByXuid(xuid);
+        if (!player) return false;
+        SidebarManager::getInstance().refreshPlayer(player);
+        return true;
+    });
+
+    // updatePlayerLine — 更新指定索引的自定义行
+    RemoteCall::exportAs(SIDEBAR_NS, "updatePlayerLine", [](std::string const& xuid, int index, std::string const& line) -> bool {
+        auto lines = PlayerConfigManager::getInstance().getLines(xuid);
+        if (index < 0 || index >= (int)lines.size()) return false;
+        lines[index] = line;
+        PlayerConfigManager::getInstance().clearLines(xuid);
+        for (auto const& l : lines) PlayerConfigManager::getInstance().addLine(xuid, l);
+        return true;
+    });
+
+    // delPlayerLine — 删除指定索引的自定义行
+    RemoteCall::exportAs(SIDEBAR_NS, "delPlayerLine", [](std::string const& xuid, int index) -> bool {
+        return PlayerConfigManager::getInstance().delLine(xuid, index);
+    });
+
+    // clearPlayerLines — 清空自定义行
+    RemoteCall::exportAs(SIDEBAR_NS, "clearPlayerLines", [](std::string const& xuid) -> bool {
+        return PlayerConfigManager::getInstance().clearLines(xuid);
+    });
+
+    // getPlayerSidebarEnabled — 获取玩家侧边栏开关状态
+    RemoteCall::exportAs(SIDEBAR_NS, "getPlayerSidebarEnabled", [](std::string const& xuid) -> bool {
+        return SidebarManager::getInstance().isPlayerEnabled(xuid);
+    });
+
+    // getDefaultShowSidebar — 获取默认显示状态（默认为 true）
+    RemoteCall::exportAs(SIDEBAR_NS, "getDefaultShowSidebar", []() -> bool {
+        return true;
+    });
+
+    // setPlayerSidebarEnabled — 设置玩家侧边栏开关
+    RemoteCall::exportAs(SIDEBAR_NS, "setPlayerSidebarEnabled", [](std::string const& xuid, bool enabled) -> bool {
+        SidebarManager::getInstance().setPlayerEnabled(xuid, enabled);
+        return true;
+    });
+
+    // setDefaultShowSidebar — 设置默认显示状态
+    RemoteCall::exportAs(SIDEBAR_NS, "setDefaultShowSidebar", [](bool /*enabled*/) -> bool {
+        // 当前实现中默认始终为 true，此接口仅为兼容 ZXDash 检测
+        return true;
+    });
+}
+
+static void removeSidebarRemoteCallApi() {
+    RemoteCall::removeNameSpace(SIDEBAR_NS);
+}
 
 // 前向声明（定义在 CommandRegistration.cpp / EventRegistration.cpp 中）
 void registerCommands();
@@ -53,6 +148,9 @@ bool MeowSidebar::enable() {
 
         // 5. 导出 RemoteCall API（供其他插件调用）
         meowpapi::exportRemoteCallApi();
+
+        // 5.5 导出 MeowSidebar 命名空间的 RemoteCall API（供 ZXDash 等检测和管理）
+        exportSidebarRemoteCallApi();
 
         // 6. 安装 BEPAPI 兼容层（如果 BEPAPI 已加载）
         meowpapi::installBepApiFallback();
@@ -95,6 +193,9 @@ bool MeowSidebar::disable() {
 
     // 移除 BEPAPI 兼容层
     meowpapi::removeBepApiFallback();
+
+    // 移除 MeowSidebar 命名空间的 RemoteCall API
+    removeSidebarRemoteCallApi();
 
     // 移除 RemoteCall API
     meowpapi::removeRemoteCallApi();

@@ -2,8 +2,25 @@
 -- 链接 MeowPAPI 静态库，提供侧边栏显示和占位符管理
 add_rules("mode.debug", "mode.release")
 
--- 使用本地缓存的 liteldev-repo
-add_repositories("liteldev-repo ../MeowEntityModel/.xmake/windows/x64/repositories/liteldev-repo")
+-- 优先使用本地缓存的 liteldev-repo，回退到 GitHub 远程
+local function find_local_repo()
+    local candidates = {
+        path.join(os.projectdir(), ".xmake", os.host(), os.arch(), "repositories", "liteldev-repo"),
+        path.join(os.projectdir(), "..", "RecipeExporter", ".xmake", os.host(), os.arch(), "repositories", "liteldev-repo"),
+        path.join(os.projectdir(), "..", "MeowEntityModel", ".xmake", os.host(), os.arch(), "repositories", "liteldev-repo"),
+        path.join(os.projectdir(), "..", ".xmake", os.host(), os.arch(), "repositories", "liteldev-repo"),
+    }
+    for _, p in ipairs(candidates) do
+        if os.exists(p) then return p end
+    end
+    return nil
+end
+local local_repo = find_local_repo()
+if local_repo then
+    add_repositories("liteldev-repo " .. local_repo)
+else
+    add_repositories("liteldev-repo https://github.com/LiteLDev/xmake-repo.git")
+end
 
 if is_config("target_type", "server") then
     add_requires("levilamina 26.10.3", {configs = {target_type = "server"}})
@@ -12,7 +29,7 @@ else
 end
 
 add_requires("levibuildscript")
-add_requires("legacyremotecall main", {configs = {target_type = "server"}})
+-- legacyremotecall 不再需要：MeowPAPI 静态库通过 DLL 转发所有 RemoteCall 调用
 add_requires("magic_enum v0.9.7")
 
 if not has_config("vs_runtime") then
@@ -34,13 +51,15 @@ target("MeowSidebar")
     add_cxflags("/EHa", "/utf-8", "/W4", "/Zm2000", "/wd4100", {force = true})
     add_defines("NOMINMAX", "UNICODE", "_AMD64_", "LL_MEMORY_OPERATORS")
     add_packages("levilamina")
-    add_packages("legacyremotecall")
+    -- legacyremotecall 不再需要
     add_packages("magic_enum")
     set_exceptions("on")
     set_kind("shared")
     set_languages("c++23")
 
-    -- 依赖 MeowPAPI 静态库（使 linkrule 的 prelink 步骤能正确处理其符号）
+    -- 依赖 MeowPAPI 静态库（PAPI 占位符翻译 + RemoteCall 代理）
+    -- 注意：不 add_deps("MeowPAPI_DLL")，否则会干扰 prelink 导致 LNK2019
+    -- 需先执行 xmake build MeowPAPI_DLL 生成 embedded_dll.h 和 embedded_manifest.h
     add_deps("MeowPAPI")
     add_includedirs("../MeowPAPI/include")
 
