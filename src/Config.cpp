@@ -1,5 +1,6 @@
 // Config.cpp - MeowSidebar 配置管理实现
 #include "Config.h"
+#include "MeowSidebar.h"
 
 #include <fstream>
 #include <sstream>
@@ -62,14 +63,42 @@ bool ConfigManager::load() {
             mConfig = DEFAULT_CONFIG;
             save();
         } else {
-            std::ifstream ifs(sConfigPath);
+            std::ifstream ifs(sConfigPath, std::ios::binary);
             if (!ifs.is_open()) {
                 mConfig = DEFAULT_CONFIG;
                 return false;
             }
             std::stringstream ss;
             ss << ifs.rdbuf();
-            mConfig = json::parse(ss.str(), nullptr, true);
+            std::string content = ss.str();
+
+            // 剥离 UTF-8 BOM（记事本等编辑器保存时会写入 BOM，导致 JSON 解析失败）
+            if (content.size() >= 3
+                && (unsigned char)content[0] == 0xEF
+                && (unsigned char)content[1] == 0xBB
+                && (unsigned char)content[2] == 0xBF) {
+                content.erase(0, 3);
+            }
+
+            try {
+                mConfig = json::parse(content, nullptr, true);
+            } catch (std::exception const& e) {
+                // 解析失败：先备份用户配置再回退默认，绝不静默丢弃用户数据
+                auto& logger = lib().getSelf().getLogger();
+                logger.warn(
+                    "config.json 解析失败({}),原文件已备份为 config.json.bak,已生成默认配置",
+                    e.what()
+                );
+                std::error_code bec;
+                fs::copy_file(
+                    sConfigPath,
+                    sConfigPath.string() + ".bak",
+                    fs::copy_options::overwrite_existing,
+                    bec
+                );
+                mConfig = DEFAULT_CONFIG;
+                save();
+            }
         }
 
         // 确保必要字段存在
@@ -79,7 +108,7 @@ bool ConfigManager::load() {
 
         mLoaded = true;
         return true;
-    } catch (std::exception const& e) {
+    } catch (std::exception const&) {
         mConfig = DEFAULT_CONFIG;
         mLoaded = true;
         return false;
@@ -92,9 +121,23 @@ bool ConfigManager::reload() {
 
 bool ConfigManager::save() {
     try {
-        std::ofstream ofs(sConfigPath);
-        if (!ofs.is_open()) return false;
-        ofs << mConfig.dump(2);
+        // 原子写：先写临时文件再替换，避免写入中途异常/崩溃损坏 config.json
+        fs::path tmpPath = sConfigPath.string() + ".tmp";
+        {
+            std::ofstream ofs(tmpPath, std::ios::binary);
+            if (!ofs.is_open()) return false;
+            ofs << mConfig.dump(2);
+            if (!ofs.good()) return false;
+        }
+        std::error_code ec;
+        fs::rename(tmpPath, sConfigPath, ec);
+        if (ec) {
+            // rename 失败（目标被占用等），退回直接写
+            std::ofstream ofs(sConfigPath, std::ios::binary);
+            if (!ofs.is_open()) return false;
+            ofs << mConfig.dump(2);
+            fs::remove(tmpPath, ec);
+        }
         return true;
     } catch (...) {
         return false;

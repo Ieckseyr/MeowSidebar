@@ -11,6 +11,7 @@
 #include "meowpapi/RemoteCallBridge.h"
 #include "meowpapi/RemoteCallAPI.h"
 #include "meowpapi/BepApiBridge.h"
+#include "meowpapi/DllExports.h"
 
 #include "ll/api/event/EventBus.h"
 #include "ll/api/mod/RegisterHelper.h"
@@ -152,6 +153,25 @@ bool MeowSidebar::enable() {
         // 3. MeowPAPI 已在 load() 阶段通过 ensureLoaded() 完成部署和自动初始化
         //    (initAsServer + registerBuiltinPlaceholders + exportRemoteCallApi + installBepApiFallback)
         //    此处无需重复调用上述函数
+        //    运行时 ABI 诊断（新版本 ABI 调用）：检测已加载 MeowPAPI.dll 的
+        //    ABI 版本/功能位/构建时间戳，与编译期 ABI 对照，秒判部署版本
+        {
+            uint32_t rtAbi     = meowpapi::loadedAbiVersion();
+            uint64_t rtBuildTs = meowpapi::loadedBuildTimestamp();
+            logger.info(
+                "MeowPAPI 运行时: ABI 0x{:06x}{} (本插件编译期 0x{:06x}), build {}",
+                rtAbi,
+                meowpapi::paramPapiSupported() ? " 带参PAPI" : "",
+                MEOWPAPI_ABI_VERSION,
+                rtBuildTs > 0 ? std::to_string(rtBuildTs) : "unknown"
+            );
+            if (rtAbi > 0 && rtAbi < MEOWPAPI_ABI_VERSION) {
+                logger.warn(
+                    "运行中的 MeowPAPI ABI 0x{:06x} 低于本插件编译期 ABI 0x{:06x}，部分功能可能降级",
+                    rtAbi, MEOWPAPI_ABI_VERSION
+                );
+            }
+        }
 
         // 4. 导出 MeowSidebar 命名空间的 RemoteCall API（供 ZXDash 等检测和管理）
         exportSidebarRemoteCallApi();
