@@ -1,34 +1,34 @@
 {
-    "data": [
-        "§e#§d#§b#§g#个§e人§d信§b息§e#§d#§b#§g#",
-        "§e你好,§g{pl.realName}",
-        "§g血量: §c{pl.health}/§f{pl.maxHealth}",
-        "§g饥饿: §e{pl.hunger}",
-        "§g坐标: §b{pl.pos}",
-        "§g维度: §a{pl.dimName}",
-        "§g等级: §d{pl.expLevel}",
-        "§e#§d#§b#§g#服§e务§d器§b信§e息§d#§b#§g#",
-        "§g在线: §a{server_online}§g/§e{server_max_players}",
-        "§gTPS: §a{server_tps}",
-        "§gMSPT: §e{server_mspt}"
+  "data": [
+    "§f§l | §a延迟{pl.ping}ms",
+    "§f§l | §b在线：{cross_total_online}§g",
+    "§f§l | §bTPS: §a{server_tps}",
+    "§f§l | §bMSPT: §e{server_mspt}",
+    "§f§l | §b实体: §b{server_total_entities}",
+    "§f§l | §bRC币: §f{pl.money}",
+    "{mtps_tpa}",
+    "§f§l |§f日期: §c{date.Y}§g-§e{date.M}§g-§b{date.D}§g",
+    "§f§l |时间: §c{date.h}§g:§e{date.m}§g:§b{date.s}",
+    [["§f§l |时长: §d{playtime.days}§g天","§f§l |时长: {playtime.hours}§g时","§f§l |时长: {playtime.minutes}§g分"],1000],
+    "{mtps_tpa}",
+    "§7注意服务器死亡掉落"
+  ],
+  "hz": 100,
+  "title_refresh_interval": 1000,
+  "title": [
+    "§1§g",
+    [
+      "|",
+      "/",
+      "-",
+      "\\"
     ],
-    "default_show_sidebar": false,
-    "hz": 1500,
-    "title": [
-        "§1§g",
-        [
-            "|",
-            "/",
-            "-",
-            "\\"
-        ],
-        "§5欢迎您加入! §g",
-        [
-            "|",
-            "/",
-            "-",
-            "\\"
-        ]
-    ],
-    "title_refresh_interval": -1
+    "§9§b信标公益社区",
+    [
+      "|",
+      "/",
+      "-",
+      "\\"
+    ]
+  ]
 }

@@ -24,3 +24,12 @@ players/
 .idea/
 *.user
 Thumbs.db
+
+# Local analysis / reverse-engineering temp artifacts
+_*.py
+_*.txt
+_*.asm
+*.dll.tmp
+log.log
+packet_dumper_output/
+*.7z

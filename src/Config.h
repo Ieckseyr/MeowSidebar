@@ -36,6 +36,9 @@ public:
     // 获取刷新间隔
     int getHz() const;
 
+    // 获取标题刷新间隔（ms），用于节流标题旋转，避免每 tick 都重建侧边栏
+    int getTitleRefreshInterval() const;
+
     // 获取标题配置
     json const& getTitleConfig() const;
 

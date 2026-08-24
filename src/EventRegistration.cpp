@@ -31,15 +31,11 @@ void registerEvents(std::vector<ll::event::ListenerPtr>& listeners) {
     );
     listeners.push_back(joinListener);
 
-    // 玩家离服 - 清理侧边栏状态
+    // 玩家离服 - 清理侧边栏状态（不发包，直接 erase 防止内存泄漏）
     auto disconnectListener = bus.emplaceListener<ll::event::player::PlayerDisconnectEvent>(
         [](ll::event::player::PlayerDisconnectEvent& event) {
             auto& player = event.self();
-            std::string xuid;
-            try { xuid = player.getXuid(); } catch (...) { return; }
-            if (xuid.empty()) return;
-            // 移除侧边栏状态
-            SidebarManager::getInstance().removeSidebar(&player);
+            SidebarManager::getInstance().onPlayerDisconnect(&player);
         }
     );
     listeners.push_back(disconnectListener);

@@ -109,6 +109,15 @@ int ConfigManager::getHz() const {
     }
 }
 
+int ConfigManager::getTitleRefreshInterval() const {
+    try {
+        // 默认 0 = 不节流（每次 tick 都旋转标题）
+        return mConfig.value("title_refresh_interval", 0);
+    } catch (...) {
+        return 0;
+    }
+}
+
 json const& ConfigManager::getTitleConfig() const {
     static json empty;
     try {

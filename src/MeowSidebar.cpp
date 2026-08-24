@@ -5,6 +5,7 @@
 #include "PlayerConfigManager.h"
 #include "DataMigrator.h"
 
+#include "meowpapi/EnsureLoaded.h"
 #include "meowpapi/PlaceholderApi.h"
 #include "meowpapi/Builtins.h"
 #include "meowpapi/RemoteCallBridge.h"
@@ -126,6 +127,14 @@ MeowSidebar& lib() {
 bool MeowSidebar::load() {
     auto& logger = getSelf().getLogger();
     logger.info("MeowSidebar (C++) loading...");
+
+    // 标准化模式:在 load() 阶段触发 MeowPAPI 部署 + 自动初始化
+    // ensureLoaded() 会自动执行:initAsServer + registerBuiltinPlaceholders +
+    // exportRemoteCallApi + installBepApiFallback
+    if (!meowpapi::ensureLoaded()) {
+        logger.error("MeowPAPI 加载失败,侧边栏系统无法工作");
+        return false;
+    }
     return true;
 }
 
@@ -140,22 +149,14 @@ bool MeowSidebar::enable() {
         // 2. 加载配置
         ConfigManager::getInstance().load();
 
-        // 3. 初始化 PAPI 为服务端模式
-        meowpapi::PlaceholderApi::getInstance().initAsServer();
+        // 3. MeowPAPI 已在 load() 阶段通过 ensureLoaded() 完成部署和自动初始化
+        //    (initAsServer + registerBuiltinPlaceholders + exportRemoteCallApi + installBepApiFallback)
+        //    此处无需重复调用上述函数
 
-        // 4. 注册内置占位符（MSPT/TPS/服务器/玩家/时间等）
-        meowpapi::registerBuiltinPlaceholders();
-
-        // 5. 导出 RemoteCall API（供其他插件调用）
-        meowpapi::exportRemoteCallApi();
-
-        // 5.5 导出 MeowSidebar 命名空间的 RemoteCall API（供 ZXDash 等检测和管理）
+        // 4. 导出 MeowSidebar 命名空间的 RemoteCall API（供 ZXDash 等检测和管理）
         exportSidebarRemoteCallApi();
 
-        // 6. 安装 BEPAPI 兼容层（如果 BEPAPI 已加载）
-        meowpapi::installBepApiFallback();
-
-        // 7. 初始化侧边栏管理器
+        // 5. 初始化侧边栏管理器
         SidebarManager::getInstance().init();
 
         // 8. 加载玩家配置
@@ -191,14 +192,17 @@ bool MeowSidebar::disable() {
     }
     mListenerPtrs.clear();
 
-    // 移除 BEPAPI 兼容层
-    meowpapi::removeBepApiFallback();
-
-    // 移除 MeowSidebar 命名空间的 RemoteCall API
+    // 标准化模式:仅清理本插件的 RemoteCall 命名空间
     removeSidebarRemoteCallApi();
 
-    // 移除 RemoteCall API
-    meowpapi::removeRemoteCallApi();
+    // 仅当本插件是 MeowPAPI 的部署者时,才执行全局清理
+    // (BEPAPI 兼容层 + MeowPAPI 命名空间 RemoteCall API)
+    // 非部署者(其他消费者已先部署 MeowPAPI)不应清理全局资源
+    if (meowpapi::isDeployer()) {
+        meowpapi::removeBepApiFallback();
+        meowpapi::removeRemoteCallApi();
+        logger.info("本插件为 MeowPAPI 部署者,已清理全局资源");
+    }
 
     logger.info("MeowSidebar (C++) disabled.");
     return true;
