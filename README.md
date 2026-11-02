@@ -53,8 +53,11 @@ lip install github.com/Ieckseyr/MeowSidebar
 ```
 
 会按 `tooth.json` 解析 `LeviLamina 26.60.*` 与 `HologramLib >=26.51.7`，并把包解压到
-`plugins/MeowSidebar/`。如果本机的 LeviLamina 是手动安装/预览版（lip 不跟踪它），
-用 `--no-dependencies` 只装本插件：
+`plugins/MeowSidebar/`。
+
+> 26.60 生态还在预览期：BDS `1.26.60` 已经能通过 lip 安装，但 LeviLamina 26.60 尚未公开发布
+> （公开最新是 26.51.9），所以此时直接 `lip install` 会卡在依赖解析。等 LeviLamina 26.60 发布后
+> 这条命令即可直接用；在那之前用 `--no-dependencies` 只装插件本体，前置自行放好：
 
 ```bash
 lip install --no-dependencies github.com/Ieckseyr/MeowSidebar
