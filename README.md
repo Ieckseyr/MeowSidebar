@@ -39,7 +39,7 @@ BDS（Bedrock Dedicated Server）26.60 侧边栏插件，LeviLamina 原生 C++23
 | MeowPAPI | 构建时同仓源码依赖，运行时由本插件内嵌部署 |
 
 运行环境只需要 BDS + LeviLamina + HologramLib，把 `MeowSidebar.dll` 与 `manifest.json`
-放进 `plugins/MeowSidebar/` 即可，MeowPAPI 会被自动释放。
+放进 `mods/MeowSidebar/` 即可，MeowPAPI 会被自动释放。
 
 ## 安装
 
@@ -53,7 +53,7 @@ lip install github.com/Ieckseyr/MeowSidebar
 ```
 
 会按 `tooth.json` 解析 `LeviLamina 26.60.*` 与 `HologramLib >=26.51.7`，并把包解压到
-`plugins/MeowSidebar/`。
+`mods/MeowSidebar/`。
 
 > 26.60 生态还在预览期：BDS `1.26.60` 已经能通过 lip 安装，但 LeviLamina 26.60 尚未公开发布
 > （公开最新是 26.51.9），所以此时直接 `lip install` 会卡在依赖解析。等 LeviLamina 26.60 发布后
@@ -75,11 +75,11 @@ plugins/
     └── manifest.json
 ```
 
-首次启动会在 `plugins/MeowSidebar/` 生成默认 `config.json` 与 `players/` 目录。
+首次启动会在 `mods/MeowSidebar/` 生成默认 `config.json` 与 `players/` 目录。
 
 ## 配置
 
-`plugins/MeowSidebar/config.json`：
+`mods/MeowSidebar/config.json`：
 
 ```jsonc
 {
