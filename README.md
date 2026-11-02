@@ -43,6 +43,25 @@ BDS（Bedrock Dedicated Server）26.60 侧边栏插件，LeviLamina 原生 C++23
 
 ## 安装
 
+### 用 lip 安装
+
+仓库根的 `tooth.json` 是 [lip](https://docs.levimc.org/lip/) 包清单，发布资产是
+GitHub Release `v<version>` 上的 `MeowSidebar.zip`：
+
+```bash
+lip install github.com/Ieckseyr/MeowSidebar
+```
+
+会按 `tooth.json` 解析 `LeviLamina 26.60.*` 与 `HologramLib >=26.51.7`，并把包解压到
+`plugins/MeowSidebar/`。如果本机的 LeviLamina 是手动安装/预览版（lip 不跟踪它），
+用 `--no-dependencies` 只装本插件：
+
+```bash
+lip install --no-dependencies github.com/Ieckseyr/MeowSidebar
+```
+
+### 手动安装
+
 ```
 plugins/
 ├── HologramLib/            # 必需
@@ -183,7 +202,10 @@ RemoteCall 建议在主线程（命令 / 事件回调）里调用；非主线程
 ```
 MeowSidebar/
 ├── manifest.json                  # 插件清单
+├── tooth.json                     # lip 包清单（格式 3）
 ├── xmake.lua                      # 构建脚本
+├── tools/
+│   └── check_tooth.py             # tooth.json / manifest / 发布包一致性校验
 ├── src/
 │   ├── MeowSidebar.{h,cpp}        # 插件主模块：加载/启用/停用、RemoteCall 导出
 │   ├── SidebarManager.{h,cpp}     # 刷新调度、渲染、动画索引、per-player 状态
@@ -228,6 +250,18 @@ xmake run scoreboard_format_test
 
 `xmake.lua` 会优先使用本地 `liteldev-repo` 缓存（`.xmake/…` 或服务器根目录 `.llsdk/liteldev-repo`），
 找不到时回退到 GitHub 远程仓库；候选仓库必须包含 `levilamina 26.60.0` 版本登记。
+
+## 发布
+
+`tooth.json` 通过 GitHub Release 分发，三处版本必须一致：
+
+1. `manifest.json` 的 `version` 与 `tooth.json` 的 `version` 相同（如 `26.60.0`）
+2. 打标签 `v26.60.0`（lip 只把 `v<semver>` 形式的标签当作版本）
+3. 把 `xmake` 产出的 `bin/MeowSidebar.zip` 上传为该 Release 的资产
+
+```bash
+python tools/check_tooth.py    # 校验版本、资产地址与解压根目录
+```
 
 ## 说明
 
