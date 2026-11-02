@@ -11,7 +11,7 @@ Lip 按 tooth.json 下载 GitHub Release 资产并解压到目标目录。以下
   1. format_version / format_uuid 是格式常量
   2. version 与 manifest.json 一致（Release tag 是 v<version>）
   3. 资产 URL 指向 MeowSidebar.zip，且本地 bin/MeowSidebar.zip 的根目录是 MeowSidebar/
-  4. 放置规则 MeowSidebar/ -> plugins/MeowSidebar 与实际布局一致
+  4. 放置规则 MeowSidebar/ -> mods/MeowSidebar 与实际布局一致
 
 用法:
   python tools/check_tooth.py
@@ -34,7 +34,7 @@ EXPECTED = {
     "tooth": "github.com/Ieckseyr/MeowSidebar",
     "zip_name": "MeowSidebar.zip",
     "zip_root": "MeowSidebar/",
-    "dest": "plugins/MeowSidebar",
+    "dest": "mods/MeowSidebar",
     "platform": "win-x64",
 }
 

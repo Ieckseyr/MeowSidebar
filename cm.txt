@@ -1,0 +1,3 @@
+chore(tooth): 26.60 起安装目录改为 mods/MeowSidebar
+
+LeviLamina 26.60 把服务端 mod 目录统一为 mods/，placements 与 check_tooth 基线同步改。

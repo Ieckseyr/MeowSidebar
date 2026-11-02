@@ -30,7 +30,7 @@
                         {
                             "type": "dir",
                             "src": "MeowSidebar/",
-                            "dest": "plugins/MeowSidebar"
+                            "dest": "mods/MeowSidebar"
                         }
                     ]
                 }
