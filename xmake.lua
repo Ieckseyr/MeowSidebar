@@ -81,19 +81,73 @@ target("MeowSidebar")
     end
 
     after_build(function (target)
-        -- 复制到 bin/MeowSidebar/ (modpack 输出)
-        local output_dir = "$(projectdir)/bin/MeowSidebar/"
+        local projectdir = os.projectdir()
+        -- 部署单个文件：直接 cp 失败（目标被正在跑的服务端加载占用）就改名旧文件再拷。
+        -- 注意：xmake 回调沙箱里没有 pcall，用 try/catch（在回调环境里才有）。
+        local function deploy(src, dst)
+            if not os.isfile(src) then
+                return false
+            end
+            local ok = false
+            try {
+                function ()
+                    os.cp(src, dst, {force = true})
+                    ok = true
+                end,
+                catch {
+                    function (e)
+                    end
+                }
+            }
+            if ok then
+                return true
+            end
+            local backup = dst .. ".old"
+            try {
+                function ()
+                    os.rm(backup)
+                end,
+                catch {
+                    function (e)
+                    end
+                }
+            }
+            try {
+                function ()
+                    os.mv(dst, backup)
+                end,
+                catch {
+                    function (e)
+                    end
+                }
+            }
+            try {
+                function ()
+                    os.cp(src, dst, {force = true})
+                    ok = true
+                end,
+                catch {
+                    function (e)
+                    end
+                }
+            }
+            if ok then
+                cprint("${yellow}[deploy]: ${reset}目标被占用，旧文件改名为 " .. backup)
+            else
+                print("warn: 部署失败（文件被占用且改名失败）: " .. dst)
+            end
+            return ok
+        end
+
+        local output_dir = path.join(projectdir, "bin", "MeowSidebar")
         os.mkdir(output_dir)
-        os.cp(target:targetfile(), output_dir)
-        local pdb_file = path.join(path.directory(target:targetfile()), "MeowSidebar.pdb")
-        if os.exists(pdb_file) then
-            os.cp(pdb_file, output_dir)
-        end
-        -- 同时复制到插件源码目录 (服务器实际加载位置: plugins/MeowSidebar/)
-        os.cp(target:targetfile(), "$(projectdir)/")
-        if os.exists(pdb_file) then
-            os.cp(pdb_file, "$(projectdir)/")
-        end
+        local dll = target:targetfile()
+        local pdb = path.join(path.directory(dll), "MeowSidebar.pdb")
+        deploy(dll, path.join(output_dir, "MeowSidebar.dll"))
+        deploy(pdb, path.join(output_dir, "MeowSidebar.pdb"))
+        -- 服务器实际加载位置: plugins/MeowSidebar/
+        deploy(dll, path.join(projectdir, "MeowSidebar.dll"))
+        deploy(pdb, path.join(projectdir, "MeowSidebar.pdb"))
     end)
 
 -- 原生计分板占位符解析/格式化的离线单测（纯逻辑，不链接 BDS/LeviLamina）
