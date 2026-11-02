@@ -14,6 +14,7 @@ fs::path ConfigManager::sPlayerDataDir = "plugins/MeowSidebar/players";
 // 默认配置
 static json const DEFAULT_CONFIG = {
     {"hz", 800},
+    {"scoreboard_cache_ms", 500},
     {"title", json::array({
         "§1§g",
         json::array({"|", "/", "-", "\\"}),
@@ -106,11 +107,9 @@ bool ConfigManager::load() {
         if (!mConfig.contains("title")) mConfig["title"] = DEFAULT_CONFIG["title"];
         if (!mConfig.contains("data")) mConfig["data"] = DEFAULT_CONFIG["data"];
 
-        mLoaded = true;
         return true;
     } catch (std::exception const&) {
         mConfig = DEFAULT_CONFIG;
-        mLoaded = true;
         return false;
     }
 }
@@ -158,6 +157,14 @@ int ConfigManager::getTitleRefreshInterval() const {
         return mConfig.value("title_refresh_interval", 0);
     } catch (...) {
         return 0;
+    }
+}
+
+int ConfigManager::getScoreboardCacheMs() const {
+    try {
+        return mConfig.value("scoreboard_cache_ms", 500);
+    } catch (...) {
+        return 500;
     }
 }
 

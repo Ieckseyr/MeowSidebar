@@ -3,6 +3,7 @@
 build/
 bin/
 *.dll
+*.dll.tmp
 *.pdb
 *.lib
 *.exp
@@ -11,15 +12,21 @@ bin/
 *.dll.d
 *.lib.d
 
-# Runtime data
+# Runtime data (generated next to the plugin at runtime)
 players/
 .migrated
 config.json
 config.json.bak
 config.json.tmp
 
-# Documentation
-*.md
+# Local diagnostics / packet dumps
+log.log
+packet_dumper_output/
+symbol_missing*
+*.7z
+_*.py
+_*.txt
+_*.asm
 
 # IDE / OS
 .vs/
@@ -27,12 +34,3 @@ config.json.tmp
 .idea/
 *.user
 Thumbs.db
-
-# Local analysis / reverse-engineering temp artifacts
-_*.py
-_*.txt
-_*.asm
-*.dll.tmp
-log.log
-packet_dumper_output/
-*.7z

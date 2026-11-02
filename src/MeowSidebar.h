@@ -1,7 +1,7 @@
 // MeowSidebar.h - 侧边栏插件主模块
 //
-// 提供基于协议层手动发包的侧边栏显示功能，
-// 同时作为 PAPI 注册中心（通过 MeowPAPI 静态库）。
+// 负责侧边栏渲染（配置 + 占位符）与 PAPI 注册中心（通过 MeowPAPI）。
+// 协议层显示由 HologramLib 的 ISidebar 承担。
 // 支持其他 C++ 插件和 LSE 插件通过 RemoteCall 注册占位符。
 #pragma once
 

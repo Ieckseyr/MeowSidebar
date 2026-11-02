@@ -4,6 +4,7 @@
 #include "SidebarManager.h"
 #include "PlayerConfigManager.h"
 #include "DataMigrator.h"
+#include "ScoreboardAdapter.h"
 
 #include "meowpapi/EnsureLoaded.h"
 #include "meowpapi/PlaceholderApi.h"
@@ -106,6 +107,47 @@ static void exportSidebarRemoteCallApi() {
         // 当前实现中默认始终为 true，此接口仅为兼容 ZXDash 检测
         return true;
     });
+
+    // ===== 原生计分板（游戏内 Scoreboard）只读查询 =====
+    // getScoreboardObjectives — 所有 objective 概要（JSON 数组字符串）
+    //   [{name, display, criteria, count, slots:[]}]
+    RemoteCall::exportAs(SIDEBAR_NS, "getScoreboardObjectives", []() -> std::string {
+        return ScoreboardAdapter::getInstance().jsonObjectives();
+    });
+
+    // getScoreboardObjective — 按 objective 名取完整快照（JSON 对象字符串，含条目与分数）
+    RemoteCall::exportAs(SIDEBAR_NS, "getScoreboardObjective", [](std::string const& objective) -> std::string {
+        return ScoreboardAdapter::getInstance().jsonObjective(objective);
+    });
+
+    // getScoreboardSidebar — 当前 sidebar 显示槽里的原生计分板（无则 "{}"）
+    RemoteCall::exportAs(SIDEBAR_NS, "getScoreboardSidebar", []() -> std::string {
+        return ScoreboardAdapter::getInstance().jsonSidebar();
+    });
+
+    // getScoreboardScore — 某 objective 中某条目的分数文本（无则空串）
+    RemoteCall::exportAs(
+        SIDEBAR_NS,
+        "getScoreboardScore",
+        [](std::string const& objective, std::string const& entry) -> std::string {
+            return ScoreboardAdapter::getInstance().scoreOf(objective, entry);
+        }
+    );
+
+    // expandScoreboard — 展开 {sb.*}/{scoreboard.*} 占位符（供其他插件复用同一套语法）
+    // playerName 可为空；给定时 {sb.<obj>.me}/{sb.<obj>.rank} 才有值
+    RemoteCall::exportAs(
+        SIDEBAR_NS,
+        "expandScoreboard",
+        [](std::string const& text, std::string const& playerName) -> std::string {
+            if (text.empty()) return text;
+            Player* player = nullptr;
+            if (!playerName.empty()) {
+                if (auto level = ll::service::getLevel()) player = level->getPlayer(playerName);
+            }
+            return ScoreboardAdapter::getInstance().expand(text, player);
+        }
+    );
 }
 
 static void removeSidebarRemoteCallApi() {
@@ -179,17 +221,53 @@ bool MeowSidebar::enable() {
         // 5. 初始化侧边栏管理器
         SidebarManager::getInstance().init();
 
-        // 8. 加载玩家配置
-        PlayerConfigManager::getInstance().loadAll();
+        // 6. 原生计分板适配自检：真正读一次 Scoreboard，
+        //     验证 26.51 ABI 访问正常（读不到只会得到 0 个 objective，不会崩溃）
+        {
+            auto&       adapter        = ScoreboardAdapter::getInstance();
+            size_t      objectiveCount = 0;
+            std::string objectivePreview;
+            std::string sidebarDesc = "未占用";
+            try {
+                auto objectives = nlohmann::json::parse(adapter.jsonObjectives());
+                if (objectives.is_array()) {
+                    objectiveCount = objectives.size();
+                    size_t shown   = 0;
+                    for (auto const& item : objectives) {
+                        if (shown >= 10) {
+                            objectivePreview += ",...";
+                            break;
+                        }
+                        if (shown) objectivePreview += ", ";
+                        objectivePreview += item.value("name", std::string{});
+                        ++shown;
+                    }
+                }
+                auto sidebar = nlohmann::json::parse(adapter.jsonSidebar());
+                if (sidebar.is_object() && sidebar.contains("name")) {
+                    sidebarDesc = sidebar.value("name", std::string{}) + " ("
+                                  + std::to_string(sidebar.value("count", 0)) + " 条)";
+                }
+            } catch (...) {
+            }
+            logger.info(
+                "原生计分板适配就绪: {} 个 objective{}, sidebar 槽显示: {}",
+                objectiveCount,
+                objectivePreview.empty() ? std::string{} : " [" + objectivePreview + "]",
+                sidebarDesc
+            );
+        }
 
-        // 9. 注册命令
+        // 7. 加载玩家配置
+        PlayerConfigManager::getInstance().loadAll();
+        // 8. 注册命令
         registerCommands();
 
-        // 10. 注册事件监听
+        // 9. 注册事件监听
         registerEvents(mListenerPtrs);
 
         logger.info("MeowSidebar (C++) enabled. PAPI 中心已启动，支持 RemoteCall 注册。");
-        logger.info("Usage: /sidebar [on|off|reload|add|del|clear|list]");
+        logger.info("Usage: /sidebar [on|off|reload|add|del|clear|list|scoreboard|expand]");
     } catch (std::exception const& e) {
         logger.error("MeowSidebar enable failed: {}", e.what());
     } catch (...) {

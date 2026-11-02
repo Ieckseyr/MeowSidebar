@@ -30,14 +30,15 @@ public:
     // 保存
     bool save();
 
-    // 获取配置
-    json const& getConfig() const { return mConfig; }
-
     // 获取刷新间隔
     int getHz() const;
 
     // 获取标题刷新间隔（ms），用于节流标题旋转，避免每 tick 都重建侧边栏
     int getTitleRefreshInterval() const;
+
+    // 原生计分板快照缓存 TTL（ms），默认 500
+    // 同一刷新周期内多个 {sb.*} 占位符共用一份快照，避免重复遍历 Scoreboard
+    int getScoreboardCacheMs() const;
 
     // 获取标题配置
     json const& getTitleConfig() const;
@@ -53,7 +54,6 @@ public:
 private:
     ConfigManager() = default;
     json mConfig;
-    bool mLoaded = false;
 
     static fs::path sConfigDir;
     static fs::path sConfigPath;

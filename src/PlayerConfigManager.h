@@ -33,9 +33,6 @@ public:
     // 获取行数
     int getLineCount(std::string const& xuid);
 
-    // 列出所有行（用于显示）
-    std::vector<std::string> listLines(std::string const& xuid);
-
 private:
     PlayerConfigManager() = default;
 

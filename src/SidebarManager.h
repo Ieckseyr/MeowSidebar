@@ -4,7 +4,7 @@
 // 1. 定时刷新（基于配置的 hz 频率，通过 ServerLevelTickEvent 在主线程驱动）
 // 2. 配置驱动的标题/数据行渲染（支持数组的数组实现动画效果）
 // 3. 通过 MeowPAPI 翻译变量
-// 4. 手动构造并发送 SetDisplayObjectivePacket + SetScorePacket
+// 4. 把渲染结果交给 HologramLib 的 ISidebar 显示（26.60 起本插件不再自己构造/发送协议包）
 #pragma once
 
 #include <nlohmann/json.hpp>
@@ -14,7 +14,6 @@
 #include <unordered_set>
 #include <chrono>
 #include <mutex>
-#include <functional>
 
 #include "ll/api/event/ListenerBase.h"
 
@@ -37,9 +36,6 @@ public:
     // 重新加载配置
     void reloadConfig();
 
-    // 立即刷新所有在线玩家的侧边栏
-    void refreshAll(int deltaMs);
-
     // 立即刷新指定玩家的侧边栏
     void refreshPlayer(Player* player);
 
@@ -59,32 +55,28 @@ private:
     // 主线程 tick 事件回调
     void onTick();
 
+    // 刷新所有在线玩家的侧边栏（tick 驱动，内部使用）
+    void refreshAll(int deltaMs);
+
     // 处理单个玩家的侧边栏
     void processPlayer(Player* player);
 
     // 判断玩家是否应该显示侧边栏
     bool shouldShowSidebar(Player* player) const;
 
-    // 发送侧边栏数据包给玩家
-    // oldTitle/oldLineCount/wasActive 用于增量更新
-    // 全部使用手动字节流 + NetworkPeer::sendPacket 统一发送
+    // 把"这一拍该显示什么"交给 HologramLib（26.60 起侧边栏不再自己构造发包）
     //
-    // scoreboardId 策略（稳定 ID）：
-    // scoreboardId = SCOREBOARD_ID_BASE + lineIndex，每次刷新复用同一批 ID。
-    // 根因已确认：sort=2 错误源于 ProtocolLib rc.1 的 Cereal 数值 variant 序列化，
-    // 升级到 rc.2（字符串 tag 序列化）后已修复。稳定 ID 不会产生身份累积
-    // （同一批 ID 反复使用，Remove 后 Change 同 ID 由 rc.2 正确翻译给 26.40 客户端）。
-    // SCOREBOARD_ID_BASE 偏移避免与 BDS 内部分配的小 ID 冲突。
+    // 协议层（SetDisplayObjective 107 / SetScore 108 / RemoveObjective 106 的编码、
+    // 回读校验、objective 名按玩家派生、行数变化时的旧行清理）全部在 HologramLib 的
+    // ISidebar 里。本插件只负责渲染配置 + 占位符，产出 title/lines。
+    // 详见 HologramLib/docs/lse/sidebar.md 与 src/scoreboard/SidebarManager.cpp。
     void sendSidebarPackets(
         Player* player,
         std::string const& title,
-        std::vector<std::string> const& lines,
-        std::string const& oldTitle,
-        int oldLineCount,
-        bool wasActive
+        std::vector<std::string> const& lines
     );
 
-    // 清除玩家的侧边栏（发送 RemoveObjective 包，用于在线切换关闭）
+    // 清除玩家的侧边栏（HologramLib 侧发 RemoveObjective）
     void sendRemoveSidebarPackets(Player* player);
 
     // ===== Array Index Manager (AIM) =====
@@ -112,16 +104,10 @@ private:
     mutable std::mutex mAIMMutex;       // 保护 mTitleAIM/mDataAIM 的并发访问
     int mTitleElapsedMs = 0;            // 标题旋转节流计时器（累计 ms）
 
-    // 记录每个玩家上次发送的行（用于增量更新）
-    // scoreboardId 使用稳定 ID：SCOREBOARD_ID_BASE + lineIndex，每次刷新复用。
-    // 根因已确认 sort=2 源于 ProtocolLib rc.1 序列化问题，rc.2 已修复，
-    // 无需 generation 计数器。断连时 erase 条目防止内存泄漏。
-    struct PlayerSidebarState {
-        std::string title;
-        int lineCount = 0;
-        bool active = false;
-    };
-    std::unordered_map<std::string, PlayerSidebarState> mPlayerStates;
+    // 当前已显示侧边栏的玩家 XUID 集合：用于判断是否已显示，避免重复发移除包。
+    // 协议层的增量 diff / 旧行清理都在 HologramLib 的 ISidebar 内；
+    // 断连时 erase 条目防止内存泄漏。
+    std::unordered_set<std::string> mActivePlayers;
     mutable std::mutex mStateMutex;
 
     // 玩家开关状态

@@ -145,8 +145,4 @@ int PlayerConfigManager::getLineCount(std::string const& xuid) {
     return static_cast<int>(lines.size());
 }
 
-std::vector<std::string> PlayerConfigManager::listLines(std::string const& xuid) {
-    return getLines(xuid);
-}
-
 } // namespace meowsidebar

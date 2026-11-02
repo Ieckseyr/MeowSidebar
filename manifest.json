@@ -1,10 +1,17 @@
 {
     "name": "MeowSidebar",
     "entry": "MeowSidebar.dll",
-    "version": "26.10.5",
+    "version": "26.60.0",
     "type": "native",
-    "description": "MeowSidebar C++ - Sidebar display + PAPI registry with CoralFans builtins",
+    "description": "MeowSidebar C++ - Sidebar display (HologramLib ISidebar) + PAPI registry with CoralFans builtins",
     "dependencies": [
-        {"name": "LegacyRemoteCall"}
+        {
+            "name": "HologramLib"
+        }
+    ],
+    "optionalDependencies": [
+        {
+            "name": "LegacyRemoteCall"
+        }
     ]
 }
