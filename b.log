@@ -1,0 +1,40 @@
+﻿[0m[32;1m[ 23%]:[0m [36;1m<MeowSidebar>[0m cache compiling.release src\MeowSidebar.cpp[0m
+[0m[32;1m[ 31%]:[0m [36;1m<MeowSidebar>[0m cache compiling.release src\SidebarManager.cpp[0m
+[0m[33;1mIn file included from src\MeowSidebar.cpp:15:
+..\MeowPAPI\include\meowpapi/RemoteCallAPI.h(407,43): warning: expansion of predefined identifier '__FUNCTION__' to a string literal is a Microsoft extension [-Wmicrosoft-string-literal-from-predefined]
+  407 |     else throw std::exception(fmt::format(__FUNCTION__ " - Unsupported Type: {}", typeid(RTN).name()).c_str());
+      |                                           ^
+..\MeowPAPI\include\meowpapi/RemoteCallAPI.h(470,42): warning: expansion of predefined identifier '__FUNCTION__' to a string literal is a Microsoft extension [-Wmicrosoft-string-literal-from-predefined]
+  470 |     throw std::runtime_error(fmt::format(__FUNCTION__ " - Unsupported Type: {}", typeid(T).name()).c_str());
+      |                                          ^
+2 warnings generated.[0m
+Running prelink...
+xmake.exe : [Prelink]: Generating bedrock_runtime_api.lib...
+所在位置 行:5 字符: 1
++ & 'C:\Program Files\xmake\xmake.exe' build -y 2>&1 | Out-File -Encodi ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([Prelink]: Gene...time_api.lib...:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[Prelink]: Processing archive: build\windows\x64\release\MeowPAPI.lib
+[Prelink]: Processing archive: E:\111FWQ\xb26.60.x\.llsdk\levilamina-26.60\lib\LeviLamina.lib
+[Prelink]: Processing archive: C:\Users\MCMin\AppData\Local\.xmake\packages\f\fmt\11.2.0\df51e1a2e20b4137a9912f841398f0
+d3\lib\fmt.lib
+[Prelink]: Processing archive: C:\Users\MCMin\AppData\Local\.xmake\packages\l\leveldb\1.23\47e59e56afbe44f79ec7388e60e8
+ab6e\lib\leveldb.lib
+[Prelink]: Processing archive: C:\Users\MCMin\AppData\Local\.xmake\packages\s\snappy\1.2.2\a5be866e5c894f39b8cc9d37aa1f
+5774\lib\snappy.lib
+[Prelink]: Processing archive: C:\Users\MCMin\AppData\Local\.xmake\packages\s\symbolprovider\v1.3.0\9731305ba7704f5982e
+5b034fbd5e46c\lib\SymbolProvider.lib
+[Prelink]: Processing archive: C:\Users\MCMin\AppData\Local\.xmake\packages\f\fmt\11.2.0\df51e1a2e20b4137a9912f841398f0
+d3\lib\fmt.lib
+[Prelink]: Processing archive: C:\Users\MCMin\AppData\Local\.xmake\packages\l\leveldb\1.23\47e59e56afbe44f79ec7388e60e8
+ab6e\lib\leveldb.lib
+[Prelink]: Processing archive: C:\Users\MCMin\AppData\Local\.xmake\packages\s\snappy\1.2.2\a5be866e5c894f39b8cc9d37aa1f
+5774\lib\snappy.lib
+[Prelink]: Processing archive: C:\Users\MCMin\AppData\Local\.xmake\packages\s\symbolprovider\v1.3.0\9731305ba7704f5982e
+5b034fbd5e46c\lib\SymbolProvider.lib
+[Prelink]: Done.
+[0m[32;1m[ 80%]:[0m [36;1m<MeowSidebar>[0m [36;1mlinking.release MeowSidebar.dll[0m
+[0m[1;32m[Mod Packer]: [0mmod already generated to E:\111FWQ\xb26.60.x\plugins\MeowSidebar\bin\MeowSidebar[0m
+[0m[32;1m[100%]:[0m [32;1mbuild ok, spent 7.125s[0m

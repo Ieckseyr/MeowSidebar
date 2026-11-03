@@ -1,6 +1,8 @@
 // MeowSidebar.cpp - 侧边栏插件主模块实现
 #include "MeowSidebar.h"
 #include "Config.h"
+#include <hologramlib/HologramLib.h>
+
 #include "SidebarManager.h"
 #include "PlayerConfigManager.h"
 #include "DataMigrator.h"
@@ -266,7 +268,21 @@ bool MeowSidebar::enable() {
         // 9. 注册事件监听
         registerEvents(mListenerPtrs);
 
-        logger.info("MeowSidebar (C++) enabled. PAPI 中心已启动，支持 RemoteCall 注册。");
+        {
+            auto const runtimeAbi = hologramlib::IHologramLib::getInstance().version();
+            if (!hologramlib::abiCompatible(runtimeAbi)) {
+                logger.error(
+                    "MeowSidebar 按 0x{:06X} 编译，当前 HologramLib 只有 0x{:06X} → 拒绝启用（重装配套版本）",
+                    static_cast<std::uint32_t>(HOLOGLIB_API_VERSION),
+                    static_cast<std::uint32_t>(runtimeAbi)
+                );
+                return false;
+            }
+        }
+        logger.info(
+            "MeowSidebar (C++) enabled. PAPI 中心已启动，支持 RemoteCall 注册。HologramLib ABI 0x{:06X}",
+            hologramlib::IHologramLib::getInstance().version()
+        );
         logger.info("Usage: /sidebar [on|off|reload|add|del|clear|list|scoreboard|expand]");
     } catch (std::exception const& e) {
         logger.error("MeowSidebar enable failed: {}", e.what());
