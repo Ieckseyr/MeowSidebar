@@ -265,6 +265,10 @@ ScoreboardSelf ScoreboardAdapter::selfFor(Player* player) {
 
 std::string ScoreboardAdapter::expand(std::string const& text, Player* player) {
     if (text.find('{') == std::string::npos) return text;
+    // 纯 PAPI 占位符（{pl.ping} 等）不查计分板，省掉一次 objective 枚举
+    if (text.find("{sb.") == std::string::npos && text.find("{scoreboard.") == std::string::npos) {
+        return text;
+    }
 
     auto names = getObjectiveNames();
 

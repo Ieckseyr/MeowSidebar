@@ -2,7 +2,7 @@
     "format_version": 3,
     "format_uuid": "289f771f-2c9a-4d73-9f3f-8492495a924d",
     "tooth": "github.com/Ieckseyr/MeowSidebar",
-    "version": "26.60.0",
+    "version": "26.60.1",
     "info": {
         "name": "MeowSidebar",
         "description": "配置驱动的侧边栏：标题/数据行帧动画、per-player 自定义行、MeowPAPI 占位符与原生计分板只读占位符 / Config-driven sidebar with animation, per-player lines, PAPI and scoreboard placeholders",

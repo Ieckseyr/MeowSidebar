@@ -25,8 +25,14 @@ BDS（Bedrock Dedicated Server）26.60 侧边栏插件，LeviLamina 原生 C++23
   提供 `/sidebar scoreboard`、`/sidebar expand` 与 5 个 RemoteCall 查询接口；**绝不写入**计分板。
 - **事件驱动刷新**：`ServerLevelTickEvent` 主线程刷新，`hz` 控制刷新间隔，
   `title_refresh_interval` 单独节流标题动画；玩家进服预加载、离服清理状态。
+- **内容去重**：这一拍的标题/数据行和上一拍完全一样时不调用 `ISidebar`，
+  避免按 `hz` 每拍白发一组 `RemoveScore + SetScore`；玩家重进、`/sidebar off`、
+  `/sidebar reload` 会清掉快照强制重发。
+- **开关持久化**：`/sidebar on|off` 写进 `players/<xuid>.json` 的 `sidebarVisible`，
+  重启后仍保留；老 BetterSidebar 数据里的 `1/0`、`true/false` 两种写法都认。
 - **健壮配置**：原子写入、UTF-8 BOM 剥离、解析失败自动备份为 `config.json.bak` 再回退默认值。
-- **自动部署 MeowPAPI**：内嵌 MeowPAPI.dll，首次加载自动释放到 `plugins/MeowPAPI/` 并初始化。
+- **自动部署 MeowPAPI**：内嵌 MeowPAPI.dll，首次加载自动释放到 `mods/MeowPAPI/` 并初始化
+  （服上已有独立 MeowPAPI 插件时直接连接它）。
 
 ## 依赖
 
@@ -34,12 +40,15 @@ BDS（Bedrock Dedicated Server）26.60 侧边栏插件，LeviLamina 原生 C++23
 |---|---|
 | BDS | 26.60 |
 | LeviLamina | 26.60.0 |
-| HologramLib | 必需，提供 `ISidebar` 协议层 |
+| HologramLib | 必需（硬导入），提供 `ISidebar` 协议层；启用时校验运行时 ABI，库比本插件旧就拒绝启用 |
 | LegacyRemoteCall | 可选（LSE 兼容） |
-| MeowPAPI | 构建时同仓源码依赖，运行时由本插件内嵌部署 |
+| MeowPAPI | 构建时同仓源码依赖；运行时由本插件内嵌部署并托管，若服上已有独立 MeowPAPI 插件则直接连接它 |
 
 运行环境只需要 BDS + LeviLamina + HologramLib，把 `MeowSidebar.dll` 与 `manifest.json`
 放进 `mods/MeowSidebar/` 即可，MeowPAPI 会被自动释放。
+
+> MeowPAPI 没链上时插件不会整体失败：占位符保持原文，侧边栏其余功能照常。
+> 日志里会有一行 `MeowPAPI 已就绪: 本插件部署并托管 / 连接已由 LeviLamina 加载的 MeowPAPI`。
 
 ## 安装
 
@@ -66,7 +75,7 @@ lip install --no-dependencies github.com/Ieckseyr/MeowSidebar
 ### 手动安装
 
 ```
-plugins/
+mods/
 ├── HologramLib/            # 必需
 │   ├── HologramLib.dll
 │   └── manifest.json
@@ -133,6 +142,9 @@ plugins/
 | `/sidebar scoreboard [objective]` | 列出原生计分板，或查看某个 objective 前 10 名（别名 `计分板`/`sb`） | 玩家 / 控制台 |
 | `/sidebar expand <文本>` | 试算 `{sb.*}` 占位符 | 玩家 / 控制台 |
 
+`add` / `expand` 的文本是 rawtext，可带空格（`/sidebar add §b金币: {pl.money}` 整段收下）。
+每个子命令都是独立 literal 注册，不会出现"输一半被当成动作名"的歧义。
+
 ## 原生计分板占位符
 
 统一前缀 `{sb.`，长写 `{scoreboard.` 等价。
@@ -197,7 +209,8 @@ const expand = ll.import("MeowSidebar", "expandScoreboard");
 logger.info(expand("金币榜第一: {sb.money.top.1.name}", "Steve"));
 ```
 
-RemoteCall 建议在主线程（命令 / 事件回调）里调用；非主线程只能拿到缓存快照。
+`refreshPlayerByXuid` / `setPlayerSidebarEnabled` 会碰玩家与发包，从 LSE 等非主线程调用时
+本插件会自动排队到服务端主线程执行；计分板查询类接口在非主线程只返回缓存快照，不触碰 BDS 结构。
 占位符注册请使用 MeowPAPI 的接口（`ll.import("MeowPAPI", ...)`，见其 API.md）。
 
 ## 项目结构
@@ -270,6 +283,10 @@ python tools/check_tooth.py    # 校验版本、资产地址与解压根目录
 
 - 侧边栏不写服务端计分板：objective 由 HologramLib 按玩家派生，不污染存档，
   也不会和计分板插件抢数据。
+- 启用时先校验 HologramLib 运行时 ABI（`ihologramlib.version()`）再注册任何命令/事件：
+  库比本插件旧直接拒绝启用，日志会写明双方 ABI；对齐时打印
+  `HologramLib 已连接 (ABI 0x012900 / 编译期 0x012900)`。
+- 卸载/停用时日志会汇总 `发送 / 内容未变跳过 / 失败 / 移除` 计数，可直接确认去重生效。
 - 兼容性补丁：LeviLamina 26.40+ 把事件类移进 inline namespace 后，MSVC 编译的
   插件与官方 Clang 构建的 `EventId` 哈希不一致；本插件显式特化了
   `getEventId<...>` 强制对齐 Clang 侧名称，保证 tick / 玩家事件能收到。

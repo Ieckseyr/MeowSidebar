@@ -31,4 +31,8 @@ private:
 
 MeowSidebar& lib();
 
+// MeowPAPI 是否已链上（内嵌部署成功，或连上了 LeviLamina 已加载的 MeowPAPI）
+// 未就绪时侧边栏照常显示，占位符保持原文，不再让整插件 load 失败。
+bool papiReady();
+
 } // namespace meowsidebar

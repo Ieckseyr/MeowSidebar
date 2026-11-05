@@ -26,6 +26,7 @@
 #include "mc/server/commands/CommandOriginType.h"
 #include "mc/server/commands/CommandOutput.h"
 #include "mc/server/commands/CommandPermissionLevel.h"
+#include "mc/server/commands/CommandRawText.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/actor/player/Player.h"
 
@@ -35,12 +36,10 @@
 
 namespace meowsidebar {
 
-struct ActionParam {
-    std::string action;
-};
-
+// 自由文本参数：/sidebar add 与 /sidebar expand 都要能带空格，
+// 普通 string 形参在 BDS 里只吃一个词，这里用 rawtext 把剩余内容整段收下。
 struct TextParam {
-    std::string text;
+    CommandRawText text;
 };
 
 struct IndexParam {
@@ -186,178 +185,195 @@ void handleExpand(CommandOrigin const& origin, CommandOutput& output, std::strin
 
 } // namespace
 
+namespace {
+
+// 取执行者玩家；后台/非玩家来源给统一报错
+Player* requirePlayer(CommandOrigin const& origin, CommandOutput& output) {
+    auto* entity = origin.getEntity();
+    if (!entity || !entity->isPlayer()) {
+        output.error("§c此指令仅允许游戏内玩家执行");
+        return nullptr;
+    }
+    return static_cast<Player*>(entity);
+}
+
+// 取 XUID；失败时把错误直接写进命令输出
+std::string requireXuid(Player& player, CommandOutput& output) {
+    std::string xuid;
+    try {
+        xuid = player.getXuid();
+    } catch (...) {
+        output.error("§c无法获取玩家信息");
+        return {};
+    }
+    if (xuid.empty()) output.error("§c无法获取 XUID");
+    return xuid;
+}
+
+void handleHelp(Player& player) {
+    player.sendMessage("§a===== §bMeowSidebar §a=====");
+    player.sendMessage("§e/sidebar on §7- 开启侧边栏");
+    player.sendMessage("§e/sidebar off §7- 关闭侧边栏");
+    player.sendMessage("§e/sidebar add <文本> §7- 添加自定义行");
+    player.sendMessage("§e/sidebar del <序号> §7- 删除自定义行");
+    player.sendMessage("§e/sidebar clear §7- 清空自定义行");
+    player.sendMessage("§e/sidebar list §7- 列出自定义行");
+    player.sendMessage("§e/sidebar scoreboard §7- 查看游戏内计分板");
+    player.sendMessage("§e/sidebar scoreboard <objective> §7- 查看计分板排行");
+    player.sendMessage("§e/sidebar expand <文本> §7- 试算 {sb.*} 占位符");
+    player.sendMessage("§e/sidebar reload §7- 重载配置(OP,后台可用)");
+}
+
+void handleSetEnabled(CommandOrigin const& origin, CommandOutput& output, bool enabled) {
+    Player* player = requirePlayer(origin, output);
+    if (!player) return;
+    std::string xuid = requireXuid(*player, output);
+    if (xuid.empty()) return;
+
+    SidebarManager::getInstance().setPlayerEnabled(xuid, enabled);
+    if (enabled) {
+        SidebarManager::getInstance().refreshPlayer(player);
+        player->sendMessage("§a[MeowSidebar] 侧边栏已开启");
+    } else {
+        SidebarManager::getInstance().removeSidebar(player);
+        player->sendMessage("§c[MeowSidebar] 侧边栏已关闭");
+    }
+}
+
+void handleClear(CommandOrigin const& origin, CommandOutput& output) {
+    Player* player = requirePlayer(origin, output);
+    if (!player) return;
+    std::string xuid = requireXuid(*player, output);
+    if (xuid.empty()) return;
+    PlayerConfigManager::getInstance().clearLines(xuid);
+    SidebarManager::getInstance().refreshPlayer(player);
+    player->sendMessage("§a[MeowSidebar] 已清空自定义行");
+}
+
+void handleList(CommandOrigin const& origin, CommandOutput& output) {
+    Player* player = requirePlayer(origin, output);
+    if (!player) return;
+    std::string xuid = requireXuid(*player, output);
+    if (xuid.empty()) return;
+    auto lines = PlayerConfigManager::getInstance().getLines(xuid);
+    if (lines.empty()) {
+        player->sendMessage("§7[MeowSidebar] 暂无自定义行");
+        return;
+    }
+    player->sendMessage("§a===== §b自定义行列表 §a=====");
+    for (size_t i = 0; i < lines.size(); i++) {
+        player->sendMessage(fmt::format("§e{}: §f{}", i, lines[i]));
+    }
+}
+
+void handleAdd(CommandOrigin const& origin, CommandOutput& output, std::string const& text) {
+    Player* player = requirePlayer(origin, output);
+    if (!player) return;
+    std::string xuid = requireXuid(*player, output);
+    if (xuid.empty()) return;
+    if (PlayerConfigManager::getInstance().addLine(xuid, text)) {
+        SidebarManager::getInstance().refreshPlayer(player);
+        player->sendMessage("§a[MeowSidebar] 已添加: §f" + text);
+    } else {
+        player->sendMessage("§c[MeowSidebar] 添加失败");
+    }
+}
+
+void handleDel(CommandOrigin const& origin, CommandOutput& output, int index) {
+    Player* player = requirePlayer(origin, output);
+    if (!player) return;
+    std::string xuid = requireXuid(*player, output);
+    if (xuid.empty()) return;
+    if (PlayerConfigManager::getInstance().delLine(xuid, index)) {
+        SidebarManager::getInstance().refreshPlayer(player);
+        player->sendMessage(fmt::format("§a[MeowSidebar] 已删除行: {}", index));
+    } else {
+        player->sendMessage("§c[MeowSidebar] 删除失败（索引无效）");
+    }
+}
+
+} // namespace
+
 void registerCommands() {
     auto& cmd = ll::command::CommandRegistrar::getInstance(false)
                     .getOrCreateCommand("sidebar", "§a设置§b侧边栏", CommandPermissionLevel::Any);
 
-    // /sidebar - 无参数，显示帮助
+    // 注意：这里刻意不给 /sidebar 挂"裸的字符串形参"做万能 action 分派。
+    // BDS 在同一层同时存在字面量子命令和字符串形参时，会优先走形参那条，
+    // 于是 /sidebar add 你好、/sidebar scoreboard xxx 都会被截成一段再报语法错误。
+    // 所以每个子命令都用独立 literal 注册，别名也只是多挂一条 literal。
+
+    // /sidebar —— 帮助
     cmd.overload().execute(
         [](CommandOrigin const& origin, CommandOutput& output) {
-            auto* entity = origin.getEntity();
-            if (!entity || !entity->isPlayer()) {
-                output.error("§c此指令仅允许游戏内玩家执行");
-                return;
-            }
-            auto& player = static_cast<Player&>(*entity);
-            player.sendMessage("§a===== §bMeowSidebar §a=====");
-            player.sendMessage("§e/sidebar on §7- 开启侧边栏");
-            player.sendMessage("§e/sidebar off §7- 关闭侧边栏");
-            player.sendMessage("§e/sidebar add <文本> §7- 添加自定义行");
-            player.sendMessage("§e/sidebar del <序号> §7- 删除自定义行");
-            player.sendMessage("§e/sidebar clear §7- 清空自定义行");
-            player.sendMessage("§e/sidebar list §7- 列出自定义行");
-            player.sendMessage("§e/sidebar scoreboard §7- 查看游戏内计分板");
-            player.sendMessage("§e/sidebar scoreboard <objective> §7- 查看计分板排行");
-            player.sendMessage("§e/sidebar expand <文本> §7- 试算 {sb.*} 占位符");
-            player.sendMessage("§e/sidebar reload §7- 重载配置(OP,后台可用)");
+            if (Player* player = requirePlayer(origin, output)) handleHelp(*player);
         }
     );
 
-    // /sidebar reload - 重载配置（独立 literal 子命令：后台控制台与游戏内均可执行）
+    // /sidebar reload —— 后台也能执行（游戏内需 OP）
     cmd.overload().text("reload").execute(
         [](CommandOrigin const& origin, CommandOutput& output) { handleReload(origin, output); }
     );
 
-    // /sidebar <action>
-    cmd.overload<ActionParam>().required("action").execute(
-        [](CommandOrigin const& origin, CommandOutput& output, ActionParam const& param) {
-            auto const& action = param.action;
+    // /sidebar on|开|true
+    for (auto const* name : {"on", "开", "true"}) {
+        cmd.overload().text(name).execute(
+            [](CommandOrigin const& origin, CommandOutput& output) { handleSetEnabled(origin, output, true); }
+        );
+    }
+    // /sidebar off|关|false
+    for (auto const* name : {"off", "关", "false"}) {
+        cmd.overload().text(name).execute(
+            [](CommandOrigin const& origin, CommandOutput& output) { handleSetEnabled(origin, output, false); }
+        );
+    }
 
-            // reload 分流：即使该输入命中本字符串重载，也在玩家检查前处理，
-            // 保证后台执行不被"仅允许游戏内玩家执行"拦截（与 literal 子命令等效）
-            if (action == "reload") {
-                handleReload(origin, output);
-                return;
-            }
-
-            // scoreboard 分流：只读查询，后台/玩家均可执行
-            if (action == "scoreboard" || action == "计分板" || action == "sb") {
-                handleScoreboardList(output);
-                return;
-            }
-
-            // expand 缺文本时给出用法（避免落到"未知操作"）
-            if (action == "expand" || action == "试算") {
-                output.error("§c用法: /sidebar expand <文本> 例: /sidebar expand {sb.money.top.1.name}");
-                return;
-            }
-
-            auto* entity = origin.getEntity();
-            if (!entity || !entity->isPlayer()) {
-                output.error("§c此指令仅允许游戏内玩家执行");
-                return;
-            }
-            auto& player = static_cast<Player&>(*entity);
-            std::string xuid;
-            try { xuid = player.getXuid(); } catch (...) {
-                output.error("§c无法获取玩家信息");
-                return;
-            }
-            if (xuid.empty()) {
-                output.error("§c无法获取 XUID");
-                return;
-            }
-
-            if (action == "on" || action == "开" || action == "true") {
-                SidebarManager::getInstance().setPlayerEnabled(xuid, true);
-                SidebarManager::getInstance().refreshPlayer(&player);
-                player.sendMessage("§a[MeowSidebar] 侧边栏已开启");
-            } else if (action == "off" || action == "关" || action == "false") {
-                SidebarManager::getInstance().setPlayerEnabled(xuid, false);
-                SidebarManager::getInstance().removeSidebar(&player);
-                player.sendMessage("§c[MeowSidebar] 侧边栏已关闭");
-            } else if (action == "clear") {
-                PlayerConfigManager::getInstance().clearLines(xuid);
-                SidebarManager::getInstance().refreshPlayer(&player);
-                player.sendMessage("§a[MeowSidebar] 已清空自定义行");
-            } else if (action == "list") {
-                auto lines = PlayerConfigManager::getInstance().getLines(xuid);
-                if (lines.empty()) {
-                    player.sendMessage("§7[MeowSidebar] 暂无自定义行");
-                } else {
-                    player.sendMessage("§a===== §b自定义行列表 §a=====");
-                    for (size_t i = 0; i < lines.size(); i++) {
-                        player.sendMessage(fmt::format("§e{}: §f{}", i, lines[i]));
-                    }
-                }
-            } else {
-                player.sendMessage("§c[MeowSidebar] 未知操作: " + action);
-            }
-        }
+    // /sidebar clear / list
+    cmd.overload().text("clear").execute(
+        [](CommandOrigin const& origin, CommandOutput& output) { handleClear(origin, output); }
+    );
+    cmd.overload().text("list").execute(
+        [](CommandOrigin const& origin, CommandOutput& output) { handleList(origin, output); }
     );
 
-    // /sidebar add <text>
-    cmd.overload<TextParam>().required("text").execute(
+    // /sidebar add <文本> —— rawtext 整段收下，可带空格
+    cmd.overload<TextParam>().text("add").required("text").execute(
         [](CommandOrigin const& origin, CommandOutput& output, TextParam const& param) {
-            auto* entity = origin.getEntity();
-            if (!entity || !entity->isPlayer()) {
-                output.error("§c此指令仅允许游戏内玩家执行");
-                return;
-            }
-            auto& player = static_cast<Player&>(*entity);
-            std::string xuid;
-            try { xuid = player.getXuid(); } catch (...) {
-                output.error("§c无法获取玩家信息");
-                return;
-            }
-            if (xuid.empty()) {
-                output.error("§c无法获取 XUID");
-                return;
-            }
-            if (PlayerConfigManager::getInstance().addLine(xuid, param.text)) {
-                SidebarManager::getInstance().refreshPlayer(&player);
-                player.sendMessage("§a[MeowSidebar] 已添加: §f" + param.text);
-            } else {
-                player.sendMessage("§c[MeowSidebar] 添加失败");
-            }
+            handleAdd(origin, output, param.text.mText);
         }
     );
 
-    // /sidebar del <index>
-    cmd.overload<IndexParam>().required("index").execute(
+    // /sidebar del <序号>
+    cmd.overload<IndexParam>().text("del").required("index").execute(
         [](CommandOrigin const& origin, CommandOutput& output, IndexParam const& param) {
-            auto* entity = origin.getEntity();
-            if (!entity || !entity->isPlayer()) {
-                output.error("§c此指令仅允许游戏内玩家执行");
-                return;
-            }
-            auto& player = static_cast<Player&>(*entity);
-            std::string xuid;
-            try { xuid = player.getXuid(); } catch (...) {
-                output.error("§c无法获取玩家信息");
-                return;
-            }
-            if (xuid.empty()) {
-                output.error("§c无法获取 XUID");
-                return;
-            }
-            if (PlayerConfigManager::getInstance().delLine(xuid, param.index)) {
-                SidebarManager::getInstance().refreshPlayer(&player);
-                player.sendMessage(fmt::format("§a[MeowSidebar] 已删除行: {}", param.index));
-            } else {
-                player.sendMessage("§c[MeowSidebar] 删除失败（索引无效）");
-            }
+            handleDel(origin, output, param.index);
         }
     );
 
-    // /sidebar scoreboard —— 列出游戏内原生计分板（控制台也可执行）
-    cmd.overload().text("scoreboard").execute(
-        [](CommandOrigin const&, CommandOutput& output) { handleScoreboardList(output); }
-    );
+    // /sidebar scoreboard|计分板|sb —— 列出原生计分板（后台也可执行）
+    for (auto const* name : {"scoreboard", "计分板", "sb"}) {
+        cmd.overload().text(name).execute(
+            [](CommandOrigin const&, CommandOutput& output) { handleScoreboardList(output); }
+        );
+    }
 
     // /sidebar scoreboard <objective> —— 查看某个 objective 的排行
-    cmd.overload<ObjectiveParam>().text("scoreboard").required("objective").execute(
-        [](CommandOrigin const&, CommandOutput& output, ObjectiveParam const& param) {
-            handleScoreboardDetail(output, param.objective);
-        }
-    );
+    for (auto const* name : {"scoreboard", "计分板", "sb"}) {
+        cmd.overload<ObjectiveParam>().text(name).required("objective").execute(
+            [](CommandOrigin const&, CommandOutput& output, ObjectiveParam const& param) {
+                handleScoreboardDetail(output, param.objective);
+            }
+        );
+    }
 
-    // /sidebar expand <text> —— 试算计分板占位符（后台也可用）
-    cmd.overload<TextParam>().text("expand").required("text").execute(
-        [](CommandOrigin const& origin, CommandOutput& output, TextParam const& param) {
-            handleExpand(origin, output, param.text);
-        }
-    );
+    // /sidebar expand|试算 <文本> —— 试算 {sb.*} 占位符（后台也可用）
+    for (auto const* name : {"expand", "试算"}) {
+        cmd.overload<TextParam>().text(name).required("text").execute(
+            [](CommandOrigin const& origin, CommandOutput& output, TextParam const& param) {
+                handleExpand(origin, output, param.text.mText);
+            }
+        );
+    }
 }
 
 } // namespace meowsidebar

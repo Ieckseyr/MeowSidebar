@@ -47,6 +47,16 @@ hologramlib::ISidebar& sidebarApi() {
     return hologramlib::IHologramLib::getInstance().sidebar();
 }
 
+// getXuid() 在玩家还没完全登录时可能抛异常，统一兜底
+std::string xuidOf(Player* player) {
+    if (!player) return {};
+    try {
+        return player->getXuid();
+    } catch (...) {
+        return {};
+    }
+}
+
 } // anonymous namespace
 namespace meowsidebar {
 
@@ -131,6 +141,9 @@ void SidebarManager::ArrayIndexManager::incrementAll(int deltaMs) {
 }
 
 void SidebarManager::init() {
+    // 记录服务端主线程：RemoteCall 可能从 LSE/其他插件线程调用进来
+    mServerThreadId = std::this_thread::get_id();
+
     // 原生计分板适配层：记录主线程 ID 并加载缓存 TTL
     ScoreboardAdapter::getInstance().init();
 
@@ -141,6 +154,10 @@ void SidebarManager::init() {
         mTitleAIM.rebuild(titleCfg.is_array() ? titleCfg : json::array({titleCfg}));
         mDataAIM.rebuild(dataCfg.is_array() ? dataCfg : json::array({dataCfg}));
         mTitleElapsedMs = 0;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mStateMutex);
+        mSentStates.clear();
     }
 
     auto& bus = ll::event::EventBus::getInstance();
@@ -168,10 +185,20 @@ void SidebarManager::shutdown() {
     }
 
     std::lock_guard<std::mutex> lock(mStateMutex);
-    mActivePlayers.clear();
+    mSentStates.clear();
 
     // 清空原生计分板快照缓存
     ScoreboardAdapter::getInstance().shutdown();
+
+    try {
+        meowsidebar::lib().getSelf().getLogger().info(
+            "侧边栏统计: 发送 {} 次 / 内容未变跳过 {} 次 / 失败 {} 次 / 移除 {} 次",
+            mSendCount.load(std::memory_order_relaxed),
+            mSkipCount.load(std::memory_order_relaxed),
+            mFailCount.load(std::memory_order_relaxed),
+            mRemoveCount.load(std::memory_order_relaxed)
+        );
+    } catch (...) {}
 }
 
 void SidebarManager::reloadConfig() {
@@ -184,6 +211,20 @@ void SidebarManager::reloadConfig() {
         mTitleAIM.rebuild(titleCfg.is_array() ? titleCfg : json::array({titleCfg}));
         mDataAIM.rebuild(dataCfg.is_array() ? dataCfg : json::array({dataCfg}));
         mTitleElapsedMs = 0;
+    }
+    {
+        // 配置变了（哪怕内容暂时一样），清掉已发送快照让下一拍重发
+        std::lock_guard<std::mutex> lock(mStateMutex);
+        mSentStates.clear();
+    }
+    // 主线程直接立即重刷，命令/后台执行 reload 时不用等下个刷新周期
+    if (isServerThread()) {
+        if (auto level = ll::service::getLevel()) {
+            level->forEachPlayer([this](Player& player) -> bool {
+                try { processPlayer(&player); } catch (...) {}
+                return true;
+            });
+        }
     }
 }
 
@@ -256,17 +297,11 @@ bool SidebarManager::shouldShowSidebar(Player* player) const {
     if (!player) return false;
     if (!player->isPlayer()) return false;
 
-    std::string xuid;
-    try { xuid = player->getXuid(); } catch (...) { return false; }
+    std::string const xuid = xuidOf(player);
     if (xuid.empty()) return false;
 
-    {
-        std::lock_guard<std::mutex> lock(mEnabledMutex);
-        auto it = mPlayerEnabled.find(xuid);
-        if (it != mPlayerEnabled.end() && !it->second) return false;
-    }
-
-    return true;
+    // 开关状态持久化在 players/<xuid>.json，重启后保留 /sidebar off
+    return PlayerConfigManager::getInstance().isVisible(xuid);
 }
 
 // 展开一行文本：先解析原生计分板占位符（{sb.*}/{scoreboard.*}），
@@ -287,7 +322,10 @@ static void appendExpandedLines(
         size_t const nl   = expanded.find('\n', start);
         std::string  part = (nl == std::string::npos) ? expanded.substr(start) : expanded.substr(start, nl - start);
         if (!part.empty()) {
-            part = meowpapi::PlaceholderApi::getInstance().translateStringWithPlayer(part, player);
+            // MeowPAPI 没链上时保持原文（不清空、不报错），侧边栏其余部分照常显示
+            if (papiReady()) {
+                part = meowpapi::PlaceholderApi::getInstance().translateStringWithPlayer(part, player);
+            }
             out.push_back(std::move(part));
         }
         if (nl == std::string::npos) break;
@@ -296,12 +334,20 @@ static void appendExpandedLines(
 }
 
 void SidebarManager::processPlayer(Player* player) {
+    if (!player) return;
+
+    std::string const xuid = xuidOf(player);
+    if (xuid.empty()) return;
+
     if (!shouldShowSidebar(player)) {
-        std::string xuid;
-        try { xuid = player->getXuid(); } catch (...) { return; }
-        std::lock_guard<std::mutex> lock(mStateMutex);
-        if (mActivePlayers.erase(xuid) > 0) {
+        bool hadSent = false;
+        {
+            std::lock_guard<std::mutex> lock(mStateMutex);
+            hadSent = mSentStates.erase(xuid) > 0;
+        }
+        if (hadSent) {
             sendRemoveSidebarPackets(player);
+            mRemoveCount.fetch_add(1, std::memory_order_relaxed);
         }
         return;
     }
@@ -320,11 +366,11 @@ void SidebarManager::processPlayer(Player* player) {
     title = ScoreboardAdapter::getInstance().expand(title, player);
     std::replace(title.begin(), title.end(), '\n', ' ');
 
-    title = meowpapi::PlaceholderApi::getInstance().translateString(title);
-    title = meowpapi::PlaceholderApi::getInstance().translateStringWithPlayer(title, player);
+    if (papiReady()) {
+        title = meowpapi::PlaceholderApi::getInstance().translateString(title);
+        title = meowpapi::PlaceholderApi::getInstance().translateStringWithPlayer(title, player);
+    }
 
-    std::string xuid;
-    try { xuid = player->getXuid(); } catch (...) { return; }
     auto customLines = PlayerConfigManager::getInstance().getLines(xuid);
 
     std::vector<std::string> lines;
@@ -346,31 +392,66 @@ void SidebarManager::processPlayer(Player* player) {
     }
 
     if (uniqueLines.empty()) {
-        std::lock_guard<std::mutex> lock(mStateMutex);
-        if (mActivePlayers.erase(xuid) > 0) {
+        bool hadSent = false;
+        {
+            std::lock_guard<std::mutex> lock(mStateMutex);
+            hadSent = mSentStates.erase(xuid) > 0;
+        }
+        if (hadSent) {
             sendRemoveSidebarPackets(player);
+            mRemoveCount.fetch_add(1, std::memory_order_relaxed);
         }
         return;
     }
 
-    sendSidebarPackets(player, title, uniqueLines);
-
+    // 内容没变就跳过：HologramLib 的 set() 每次都会重发 RemoveScore + SetScore。
+    // 但库侧状态可能被别的消费方清掉（例如 MHR 的 /mhr sidebar clear 会 removeAll），
+    // 所以跳过前先问一次 isShown，库侧没了就照常重发。
+    bool sameContent = false;
     {
         std::lock_guard<std::mutex> lock(mStateMutex);
-        mActivePlayers.insert(xuid);
+        auto                        it = mSentStates.find(xuid);
+        sameContent = it != mSentStates.end() && it->second.title == title && it->second.lines == uniqueLines;
+    }
+    if (sameContent) {
+        bool stillShown = true;
+        try {
+            stillShown = sidebarApi().isShown(player->getRealName());
+        } catch (...) {
+            // 查不了就当作还在，别为了自检把包刷爆
+            stillShown = true;
+        }
+        if (stillShown) {
+            mSkipCount.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        // 库侧已被清空：清掉本插件快照后走正常发送
+        std::lock_guard<std::mutex> lock(mStateMutex);
+        mSentStates.erase(xuid);
+    }
+
+    if (sendSidebarPackets(player, title, uniqueLines)) {
+        mSendCount.fetch_add(1, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(mStateMutex);
+        mSentStates[xuid] = SentState{title, uniqueLines};
+    } else {
+        // 玩家还没进世界 / 没网络对端：不记快照，下一拍重试
+        mFailCount.fetch_add(1, std::memory_order_relaxed);
     }
 }
-void SidebarManager::sendSidebarPackets(
+
+bool SidebarManager::sendSidebarPackets(
     Player* player,
     std::string const& title,
     std::vector<std::string> const& lines
 ) {
-    if (!player || lines.empty()) return;
+    if (!player || lines.empty()) return false;
     try {
         // HologramLib 按玩家名索引（objective 名也由名字派生）
-        sidebarApi().set(player->getRealName(), title, lines);
+        return sidebarApi().set(player->getRealName(), title, lines);
     } catch (...) {
-        // 发包失败不影响服务端 tick
+        // 发包失败不影响服务端 tick，下一拍重试
+        return false;
     }
 }
 
@@ -385,31 +466,43 @@ void SidebarManager::sendRemoveSidebarPackets(Player* player) {
 void SidebarManager::removeSidebar(Player* player) {
     if (!player) return;
     sendRemoveSidebarPackets(player);
-    std::string xuid;
-    try { xuid = player->getXuid(); } catch (...) { return; }
+    std::string const xuid = xuidOf(player);
+    if (xuid.empty()) return;
     std::lock_guard<std::mutex> lock(mStateMutex);
-    mActivePlayers.erase(xuid);
+    mSentStates.erase(xuid);
 }
 
 void SidebarManager::onPlayerDisconnect(Player* player) {
     if (!player) return;
-    std::string xuid;
-    try { xuid = player->getXuid(); } catch (...) { return; }
+    std::string const xuid = xuidOf(player);
+    if (xuid.empty()) return;
+    // 断连时不发包（连接已关闭，发了也收不到），只清状态防泄漏。
+    // HologramLib 在玩家离服时也会清自己的 bar，这里同步清掉已发送快照，
+    // 保证重新进服时一定会重发（否则内容没变会被去重挡掉）。
+    std::lock_guard<std::mutex> lock(mStateMutex);
+    mSentStates.erase(xuid);
+}
+
+void SidebarManager::onPlayerJoin(Player* player) {
+    if (!player) return;
+    std::string const xuid = xuidOf(player);
     if (xuid.empty()) return;
     std::lock_guard<std::mutex> lock(mStateMutex);
-    mActivePlayers.erase(xuid);
+    mSentStates.erase(xuid);
 }
 
 void SidebarManager::setPlayerEnabled(std::string const& xuid, bool enabled) {
-    std::lock_guard<std::mutex> lock(mEnabledMutex);
-    mPlayerEnabled[xuid] = enabled;
+    if (xuid.empty()) return;
+    PlayerConfigManager::getInstance().setVisible(xuid, enabled);
 }
 
 bool SidebarManager::isPlayerEnabled(std::string const& xuid) const {
-    std::lock_guard<std::mutex> lock(mEnabledMutex);
-    auto it = mPlayerEnabled.find(xuid);
-    if (it != mPlayerEnabled.end()) return it->second;
-    return true;
+    return PlayerConfigManager::getInstance().isVisible(xuid);
+}
+
+bool SidebarManager::isServerThread() const {
+    if (mServerThreadId == std::thread::id{}) return true; // 还没 init()：按主线程处理
+    return mServerThreadId == std::this_thread::get_id();
 }
 
 } // namespace meowsidebar

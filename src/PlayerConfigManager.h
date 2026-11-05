@@ -1,7 +1,7 @@
 // PlayerConfigManager.h - 玩家配置管理器（PCM）
 //
 // 管理每个玩家的自定义侧边栏行，支持增删查清空。
-// 数据存储在 plugins/MeowSidebar/players/<xuid>.json
+// 数据存储在 <mod 目录>/players/<xuid>.json
 #pragma once
 
 #include <string>
@@ -33,11 +33,17 @@ public:
     // 获取行数
     int getLineCount(std::string const& xuid);
 
+    // 侧边栏开关（持久化在 players/<xuid>.json 的 sidebarVisible 字段）
+    // 文件里没有该字段时按 true 处理；1/0 与 true/false 两种写法都认
+    bool isVisible(std::string const& xuid);
+    bool setVisible(std::string const& xuid, bool visible);
+
 private:
     PlayerConfigManager() = default;
 
     struct PlayerConfig {
         std::vector<std::string> customLines;
+        bool                     visible = true;
     };
 
     std::unordered_map<std::string, PlayerConfig> mCache;

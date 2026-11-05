@@ -47,6 +47,8 @@ void registerEvents(std::vector<ll::event::ListenerPtr>& listeners) {
             if (xuid.empty()) return;
             // 预加载玩家配置
             PlayerConfigManager::getInstance().getLines(xuid);
+            // 清掉上次会话的已发送快照：重新进服一定重发（内容没变也不会被去重挡掉）
+            SidebarManager::getInstance().onPlayerJoin(&player);
         }
     );
     listeners.push_back(joinListener);

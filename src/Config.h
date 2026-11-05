@@ -46,7 +46,7 @@ public:
     // 获取数据行配置
     json const& getDataConfig() const;
 
-    // 配置目录
+    // 配置目录（相对 DLL 所在目录）
     static fs::path const& getConfigDir();
     static fs::path const& getConfigPath();
     static fs::path const& getPlayerDataDir();
@@ -54,10 +54,6 @@ public:
 private:
     ConfigManager() = default;
     json mConfig;
-
-    static fs::path sConfigDir;
-    static fs::path sConfigPath;
-    static fs::path sPlayerDataDir;
 };
 
 } // namespace meowsidebar

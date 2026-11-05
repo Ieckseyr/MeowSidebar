@@ -62,7 +62,7 @@ target("MeowSidebar")
     add_includedirs("../MeowPAPI/include")
 
     -- HologramLib 前置（26.60 起侧边栏不再自己构造/发送协议包，全部走 HologramLib 的 ISidebar）
-    -- 构建顺序：先 xmake build（在 HologramLib 目录），产出 plugins/HologramLib/HologramLib.lib
+    -- 构建顺序：先 xmake build（在 HologramLib 目录），产出 mods/HologramLib/HologramLib.lib
     add_includedirs("../HologramLib/include")
     add_linkdirs("../HologramLib")
     add_links("HologramLib")
@@ -145,7 +145,7 @@ target("MeowSidebar")
         local pdb = path.join(path.directory(dll), "MeowSidebar.pdb")
         deploy(dll, path.join(output_dir, "MeowSidebar.dll"))
         deploy(pdb, path.join(output_dir, "MeowSidebar.pdb"))
-        -- 服务器实际加载位置: plugins/MeowSidebar/
+        -- 服务器实际加载位置: mods/MeowSidebar/
         deploy(dll, path.join(projectdir, "MeowSidebar.dll"))
         deploy(pdb, path.join(projectdir, "MeowSidebar.pdb"))
     end)

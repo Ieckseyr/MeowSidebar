@@ -19,13 +19,38 @@
 #include "ll/api/event/EventBus.h"
 #include "ll/api/mod/RegisterHelper.h"
 #include "ll/api/service/Bedrock.h"
+#include "ll/api/thread/ServerThreadExecutor.h"
 
 #include <mc/world/level/Level.h>
 #include <mc/world/actor/player/Player.h>
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
+#include <functional>
+
 namespace meowsidebar {
+
+// MeowPAPI 是否已链上（内嵌部署成功 / 连上已加载的 MeowPAPI.dll）
+static std::atomic<bool> gPapiReady{false};
+
+bool papiReady() {
+    return gPapiReady.load(std::memory_order_relaxed);
+}
+
+// 非主线程调用时把活儿丢回服务端主线程执行（LSE/RemoteCall 线程不能碰 BDS 结构）
+static void runOnServerThread(std::function<void()> fn) {
+    auto& manager = SidebarManager::getInstance();
+    if (manager.isServerThread()) {
+        fn();
+        return;
+    }
+    try {
+        ll::thread::ServerThreadExecutor::getDefault().execute(std::move(fn));
+    } catch (...) {
+        // 服务端正在收尾/执行器已销毁：丢弃这次刷新，不影响调用方
+    }
+}
 
 // ===== MeowSidebar 命名空间 RemoteCall 导出 =====
 // ZXDash 等外部插件通过 RemoteCall::hasFunc("MeowSidebar", "reloadConfig") 检测本插件，
@@ -60,6 +85,19 @@ static void exportSidebarRemoteCallApi() {
 
     // refreshPlayerByXuid — 通过 XUID 刷新指定玩家的侧边栏
     RemoteCall::exportAs(SIDEBAR_NS, "refreshPlayerByXuid", [](std::string const& xuid) -> bool {
+        if (xuid.empty()) return false;
+        // LSE / 其他插件线程直接进来时不能碰 Player 与发包，丢回服务端主线程
+        if (!SidebarManager::getInstance().isServerThread()) {
+            std::string copy = xuid;
+            runOnServerThread([copy] {
+                auto level = ll::service::getLevel();
+                if (!level) return;
+                if (auto* player = level->getPlayerByXuid(copy)) {
+                    SidebarManager::getInstance().refreshPlayer(player);
+                }
+            });
+            return true; // 已排队，下一拍执行
+        }
         auto lvl = ll::service::getLevel();
         if (!lvl) return false;
         auto* player = lvl->getPlayerByXuid(xuid);
@@ -98,9 +136,22 @@ static void exportSidebarRemoteCallApi() {
         return true;
     });
 
-    // setPlayerSidebarEnabled — 设置玩家侧边栏开关
+    // setPlayerSidebarEnabled — 设置玩家侧边栏开关（落盘 + 主线程立即生效）
     RemoteCall::exportAs(SIDEBAR_NS, "setPlayerSidebarEnabled", [](std::string const& xuid, bool enabled) -> bool {
+        if (xuid.empty()) return false;
         SidebarManager::getInstance().setPlayerEnabled(xuid, enabled);
+        std::string copy = xuid;
+        runOnServerThread([copy, enabled] {
+            auto level = ll::service::getLevel();
+            if (!level) return;
+            auto* player = level->getPlayerByXuid(copy);
+            if (!player) return;
+            if (enabled) {
+                SidebarManager::getInstance().refreshPlayer(player);
+            } else {
+                SidebarManager::getInstance().removeSidebar(player);
+            }
+        });
         return true;
     });
 
@@ -173,12 +224,18 @@ bool MeowSidebar::load() {
     auto& logger = getSelf().getLogger();
     logger.info("MeowSidebar (C++) loading...");
 
-    // 标准化模式:在 load() 阶段触发 MeowPAPI 部署 + 自动初始化
-    // ensureLoaded() 会自动执行:initAsServer + registerBuiltinPlaceholders +
-    // exportRemoteCallApi + installBepApiFallback
-    if (!meowpapi::ensureLoaded()) {
-        logger.error("MeowPAPI 加载失败,侧边栏系统无法工作");
-        return false;
+    // MeowPAPI 链入：内嵌的 MeowPAPI.dll 在 load 阶段释放并加载；
+    // 若服上已经把 MeowPAPI 当独立插件加载，这里直接连上它（多消费者防冲突在静态库里）。
+    if (meowpapi::ensureLoaded()) {
+        gPapiReady.store(true, std::memory_order_relaxed);
+        logger.info(
+            "MeowPAPI 已就绪: {} (ABI 0x{:06x})",
+            meowpapi::isDeployer() ? "本插件部署并托管" : "连接已由 LeviLamina 加载的 MeowPAPI",
+            meowpapi::loadedAbiVersion()
+        );
+    } else {
+        // 侧边栏渲染本身不依赖占位符引擎：先降级为原文显示，enable() 里再补一次
+        logger.error("MeowPAPI 未链上，占位符将保持原文；侧边栏其余功能照常");
     }
     return true;
 }
@@ -187,6 +244,30 @@ bool MeowSidebar::enable() {
     auto& logger = getSelf().getLogger();
     logger.info("MeowSidebar (C++) enabling...");
 
+    // 0. HologramLib 前置检查必须最先做：
+    //    本插件所有侧边栏显示都走它的 ISidebar，库比消费方旧时虚表槽位会对不上，
+    //    所以要在注册命令/事件/RemoteCall 之前就拒绝启用（避免半初始化状态）。
+    std::uint32_t hologramAbi = 0;
+    try {
+        hologramAbi = static_cast<std::uint32_t>(hologramlib::IHologramLib::getInstance().version());
+    } catch (...) {
+        logger.error("HologramLib 不可用：无法取得 IHologramLib 实例，拒绝启用");
+        return false;
+    }
+    if (!hologramlib::abiCompatible(hologramAbi)) {
+        logger.error(
+            "MeowSidebar 按 0x{:06X} 编译，当前 HologramLib 只有 0x{:06X} → 拒绝启用（重装配套版本）",
+            static_cast<std::uint32_t>(HOLOGLIB_API_VERSION),
+            hologramAbi
+        );
+        return false;
+    }
+    logger.info(
+        "HologramLib 已连接 (ABI 0x{:06X} / 编译期 0x{:06X})",
+        hologramAbi,
+        static_cast<std::uint32_t>(HOLOGLIB_API_VERSION)
+    );
+
     try {
         // 1. 数据迁移（BetterSidebar → MeowSidebar）
         DataMigrator::migrateIfNeeded();
@@ -194,12 +275,20 @@ bool MeowSidebar::enable() {
         // 2. 加载配置
         ConfigManager::getInstance().load();
 
-        // 3. MeowPAPI 已在 load() 阶段通过 ensureLoaded() 完成部署和自动初始化
-        //    (initAsServer + registerBuiltinPlaceholders + exportRemoteCallApi + installBepApiFallback)
-        //    此处无需重复调用上述函数
-        //    运行时 ABI 诊断（新版本 ABI 调用）：检测已加载 MeowPAPI.dll 的
-        //    ABI 版本/功能位/构建时间戳，与编译期 ABI 对照，秒判部署版本
-        {
+        // 3. MeowPAPI：load() 阶段若因部署/加载时序没链上，这里再补一次；
+        //    仍失败则降级运行（占位符保持原文），不阻断侧边栏。
+        if (!papiReady()) {
+            if (meowpapi::ensureLoaded()) {
+                gPapiReady.store(true, std::memory_order_relaxed);
+                logger.info(
+                    "MeowPAPI 已就绪（enable 补链）: {}",
+                    meowpapi::isDeployer() ? "本插件部署并托管" : "连接独立 MeowPAPI 插件"
+                );
+            }
+        }
+        if (papiReady()) {
+            // 运行时 ABI 诊断：检测已加载 MeowPAPI.dll 的 ABI 版本/功能位/构建时间戳，
+            // 与编译期 ABI 对照，秒判部署版本
             uint32_t rtAbi     = meowpapi::loadedAbiVersion();
             uint64_t rtBuildTs = meowpapi::loadedBuildTimestamp();
             logger.info(
@@ -215,6 +304,8 @@ bool MeowSidebar::enable() {
                     rtAbi, MEOWPAPI_ABI_VERSION
                 );
             }
+        } else {
+            logger.error("MeowPAPI 未链上：占位符保持原文，侧边栏其余功能照常");
         }
 
         // 4. 导出 MeowSidebar 命名空间的 RemoteCall API（供 ZXDash 等检测和管理）
@@ -268,20 +359,10 @@ bool MeowSidebar::enable() {
         // 9. 注册事件监听
         registerEvents(mListenerPtrs);
 
-        {
-            auto const runtimeAbi = hologramlib::IHologramLib::getInstance().version();
-            if (!hologramlib::abiCompatible(runtimeAbi)) {
-                logger.error(
-                    "MeowSidebar 按 0x{:06X} 编译，当前 HologramLib 只有 0x{:06X} → 拒绝启用（重装配套版本）",
-                    static_cast<std::uint32_t>(HOLOGLIB_API_VERSION),
-                    static_cast<std::uint32_t>(runtimeAbi)
-                );
-                return false;
-            }
-        }
         logger.info(
-            "MeowSidebar (C++) enabled. PAPI 中心已启动，支持 RemoteCall 注册。HologramLib ABI 0x{:06X}",
-            hologramlib::IHologramLib::getInstance().version()
+            "MeowSidebar (C++) enabled. 侧边栏=tick 驱动, PAPI={}, HologramLib ABI 0x{:06X}",
+            papiReady() ? "已链入" : "未链上(占位符降级)",
+            hologramAbi
         );
         logger.info("Usage: /sidebar [on|off|reload|add|del|clear|list|scoreboard|expand]");
     } catch (std::exception const& e) {

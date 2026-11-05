@@ -7,9 +7,30 @@
 
 namespace meowsidebar {
 
-fs::path ConfigManager::sConfigDir     = "plugins/MeowSidebar";
-fs::path ConfigManager::sConfigPath    = "plugins/MeowSidebar/config.json";
-fs::path ConfigManager::sPlayerDataDir = "plugins/MeowSidebar/players";
+namespace {
+
+struct Paths {
+    fs::path dir;
+    fs::path config;
+    fs::path players;
+};
+
+// 跟着 DLL 走：<mod 目录>/config.json、<mod 目录>/players，不再写死 plugins
+Paths const& paths() {
+    static Paths const resolved = [] {
+        fs::path base;
+        if (auto mod = ll::mod::NativeMod::current(); mod) {
+            base = mod->getModDir();
+        }
+        if (base.empty()) {
+            base = fs::path{"mods/MeowSidebar"};
+        }
+        return Paths{base, base / "config.json", base / "players"};
+    }();
+    return resolved;
+}
+
+} // namespace
 
 // 默认配置
 static json const DEFAULT_CONFIG = {
@@ -56,15 +77,15 @@ bool ConfigManager::load() {
     try {
         // 确保目录存在
         std::error_code ec;
-        fs::create_directories(sConfigDir, ec);
-        fs::create_directories(sPlayerDataDir, ec);
+        fs::create_directories(paths().dir, ec);
+        fs::create_directories(paths().players, ec);
 
-        if (!fs::exists(sConfigPath)) {
+        if (!fs::exists(paths().config)) {
             // 写入默认配置
             mConfig = DEFAULT_CONFIG;
             save();
         } else {
-            std::ifstream ifs(sConfigPath, std::ios::binary);
+            std::ifstream ifs(paths().config, std::ios::binary);
             if (!ifs.is_open()) {
                 mConfig = DEFAULT_CONFIG;
                 return false;
@@ -92,8 +113,8 @@ bool ConfigManager::load() {
                 );
                 std::error_code bec;
                 fs::copy_file(
-                    sConfigPath,
-                    sConfigPath.string() + ".bak",
+                    paths().config,
+                    paths().config.string() + ".bak",
                     fs::copy_options::overwrite_existing,
                     bec
                 );
@@ -121,7 +142,7 @@ bool ConfigManager::reload() {
 bool ConfigManager::save() {
     try {
         // 原子写：先写临时文件再替换，避免写入中途异常/崩溃损坏 config.json
-        fs::path tmpPath = sConfigPath.string() + ".tmp";
+        fs::path tmpPath = paths().config.string() + ".tmp";
         {
             std::ofstream ofs(tmpPath, std::ios::binary);
             if (!ofs.is_open()) return false;
@@ -129,10 +150,10 @@ bool ConfigManager::save() {
             if (!ofs.good()) return false;
         }
         std::error_code ec;
-        fs::rename(tmpPath, sConfigPath, ec);
+        fs::rename(tmpPath, paths().config, ec);
         if (ec) {
             // rename 失败（目标被占用等），退回直接写
-            std::ofstream ofs(sConfigPath, std::ios::binary);
+            std::ofstream ofs(paths().config, std::ios::binary);
             if (!ofs.is_open()) return false;
             ofs << mConfig.dump(2);
             fs::remove(tmpPath, ec);
@@ -186,8 +207,8 @@ json const& ConfigManager::getDataConfig() const {
     }
 }
 
-fs::path const& ConfigManager::getConfigDir() { return sConfigDir; }
-fs::path const& ConfigManager::getConfigPath() { return sConfigPath; }
-fs::path const& ConfigManager::getPlayerDataDir() { return sPlayerDataDir; }
+fs::path const& ConfigManager::getConfigDir() { return paths().dir; }
+fs::path const& ConfigManager::getConfigPath() { return paths().config; }
+fs::path const& ConfigManager::getPlayerDataDir() { return paths().players; }
 
 } // namespace meowsidebar

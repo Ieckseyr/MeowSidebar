@@ -12,8 +12,11 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <mutex>
+#include <thread>
 
 #include "ll/api/event/ListenerBase.h"
 
@@ -45,9 +48,16 @@ public:
     // 玩家断连清理：不发包（连接已关闭），直接 erase 状态条目防止内存泄漏
     void onPlayerDisconnect(Player* player);
 
-    // 设置玩家的侧边栏开关状态
+    // 玩家进服：清掉该玩家的已发送快照，下一拍必定重发
+    // （HologramLib 在玩家离服时会清掉自己的 bar 状态，本插件缓存必须同步失效）
+    void onPlayerJoin(Player* player);
+
+    // 设置玩家的侧边栏开关状态（持久化到 players/<xuid>.json 的 sidebarVisible）
     void setPlayerEnabled(std::string const& xuid, bool enabled);
     bool isPlayerEnabled(std::string const& xuid) const;
+
+    // 当前线程是否服务端主线程（RemoteCall 可能从 LSE 线程进来，BDS 结构只能主线程碰）
+    bool isServerThread() const;
 
 private:
     SidebarManager() = default;
@@ -69,8 +79,8 @@ private:
     // 协议层（SetDisplayObjective 107 / SetScore 108 / RemoveObjective 106 的编码、
     // 回读校验、objective 名按玩家派生、行数变化时的旧行清理）全部在 HologramLib 的
     // ISidebar 里。本插件只负责渲染配置 + 占位符，产出 title/lines。
-    // 详见 HologramLib/docs/lse/sidebar.md 与 src/scoreboard/SidebarManager.cpp。
-    void sendSidebarPackets(
+    // 返回 false 表示这一拍没送出去（玩家还没进世界 / 没网络对端），下一拍会重试。
+    bool sendSidebarPackets(
         Player* player,
         std::string const& title,
         std::vector<std::string> const& lines
@@ -104,20 +114,33 @@ private:
     mutable std::mutex mAIMMutex;       // 保护 mTitleAIM/mDataAIM 的并发访问
     int mTitleElapsedMs = 0;            // 标题旋转节流计时器（累计 ms）
 
-    // 当前已显示侧边栏的玩家 XUID 集合：用于判断是否已显示，避免重复发移除包。
-    // 协议层的增量 diff / 旧行清理都在 HologramLib 的 ISidebar 内；
-    // 断连时 erase 条目防止内存泄漏。
-    std::unordered_set<std::string> mActivePlayers;
-    mutable std::mutex mStateMutex;
+    // 每位玩家"上一次真正送出去的内容"：内容没变就跳过 ISidebar 调用。
+    // HologramLib 的 set() 每次都会重发 RemoveScore + SetScore（标题变了还要重建 objective），
+    // 按 hz=100 刷新时一个玩家每秒会白发 20 个包；这里用内容快照挡住重复发送。
+    // 玩家离服/`/sidebar off`/重载配置时 erase 对应条目，保证下一拍必定重发。
+    struct SentState {
+        std::string              title;
+        std::vector<std::string> lines;
+    };
+    std::unordered_map<std::string, SentState> mSentStates;
+    mutable std::mutex                         mStateMutex;
 
-    // 玩家开关状态
-    std::unordered_map<std::string, bool> mPlayerEnabled;
-    mutable std::mutex mEnabledMutex;
+    // 侧边栏开关状态的持久化在 PlayerConfigManager（players/<xuid>.json），
+    // 这里不再维护第二份内存状态。
 
     // 主线程 tick 事件驱动
-    ll::event::ListenerPtr mTickListener = 0;
+    ll::event::ListenerPtr                mTickListener = 0;
     std::chrono::steady_clock::time_point mLastRefreshTime;
-    bool mLastRefreshTimeValid = false;
+    bool                                  mLastRefreshTimeValid = false;
+
+    // 服务端主线程 ID（init() 时记录，用于 RemoteCall 线程判定）
+    std::thread::id mServerThreadId{};
+
+    // 运行期计数：disable 时汇总，用来确认"内容没变就不重发"确实在生效
+    std::atomic<std::uint64_t> mSendCount{0};
+    std::atomic<std::uint64_t> mSkipCount{0};
+    std::atomic<std::uint64_t> mFailCount{0};
+    std::atomic<std::uint64_t> mRemoveCount{0};
 };
 
 } // namespace meowsidebar
