@@ -59,6 +59,24 @@ public:
     // 当前线程是否服务端主线程（RemoteCall 可能从 LSE 线程进来，BDS 结构只能主线程碰）
     bool isServerThread() const;
 
+    // 取库的 ISidebar（只认 version()，不猜槽位，见 SidebarManager.cpp）。
+    // 返回 false = 本次拿不到接口（库比插件旧 / 头库错配）→ 降级为无侧边栏，
+    // 但插件照常启用（命令、PAPI、计分板查询不受影响）。
+    bool bindHologramSidebar();
+
+    // bindHologramSidebar() 的诊断结果（供 enable 日志展示）
+    std::uint32_t hologramAbi() const { return mHologramAbi; }
+    char const*   hologramLayout() const { return mHologramLayout; }
+
+    // 绑定后能否用 RTTI 复核「取到的确实是侧边栏适配器」（关掉 RTTI 时退化为纯 ABI 表）
+    static constexpr bool rttiSelfCheckAvailable() {
+#if defined(_CPPRTTI) || defined(__GXX_RTTI) || defined(__cpp_rtti)
+        return true;
+#else
+        return false;
+#endif
+    }
+
 private:
     SidebarManager() = default;
 
@@ -141,6 +159,10 @@ private:
     std::atomic<std::uint64_t> mSkipCount{0};
     std::atomic<std::uint64_t> mFailCount{0};
     std::atomic<std::uint64_t> mRemoveCount{0};
+
+    // 绑定后的 ISidebar（bindHologramSidebar 里按版本门解析，之后只读）
+    std::uint32_t mHologramAbi    = 0;
+    char const*   mHologramLayout = "未绑定";
 };
 
 } // namespace meowsidebar

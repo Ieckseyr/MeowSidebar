@@ -4,6 +4,7 @@
 #include <hologramlib/HologramLib.h>
 
 #include "SidebarManager.h"
+#include <hologramlib/AbiCompat.h>
 #include "PlayerConfigManager.h"
 #include "DataMigrator.h"
 #include "ScoreboardAdapter.h"
@@ -244,29 +245,33 @@ bool MeowSidebar::enable() {
     auto& logger = getSelf().getLogger();
     logger.info("MeowSidebar (C++) enabling...");
 
-    // 0. HologramLib 前置检查必须最先做：
-    //    本插件所有侧边栏显示都走它的 ISidebar，库比消费方旧时虚表槽位会对不上，
-    //    所以要在注册命令/事件/RemoteCall 之前就拒绝启用（避免半初始化状态）。
+    // 0. HologramLib 前置：只按 version() 取接口，不猜槽位。
+    //    1.37.0 起库恢复「只追加、不删槽」，27/32 号是空保留槽，槽位顺序与 0x012900 一致；
+    //    取接口走 hologramlib::abi::sidebar()（运行时库比编译期旧时返回 nullptr）。
+    //    取不到只降级为「无侧边栏」，不再让整个插件启用失败——命令/PAPI/计分板查询都不依赖它。
     std::uint32_t hologramAbi = 0;
     try {
         hologramAbi = static_cast<std::uint32_t>(hologramlib::IHologramLib::getInstance().version());
     } catch (...) {
-        logger.error("HologramLib 不可用：无法取得 IHologramLib 实例，拒绝启用");
+        logger.error("HologramLib 不可用：无法取得 IHologramLib 实例");
         return false;
     }
-    if (!hologramlib::abiCompatible(hologramAbi)) {
-        logger.error(
-            "MeowSidebar 按 0x{:06X} 编译，当前 HologramLib 只有 0x{:06X} → 拒绝启用（重装配套版本）",
+    if (SidebarManager::getInstance().bindHologramSidebar()) {
+        logger.info(
+            "HologramLib 已连接 (运行时 ABI 0x{:06X} / 编译期 0x{:06X}): {}",
+            hologramAbi,
             static_cast<std::uint32_t>(HOLOGLIB_API_VERSION),
-            hologramAbi
+            SidebarManager::getInstance().hologramLayout()
         );
-        return false;
+    } else {
+        logger.error(
+            "HologramLib 侧边栏接口不可用 (运行时 ABI 0x{:06X} / 编译期 0x{:06X}): {} → "
+            "本次以「无侧边栏」模式继续启用，命令/PAPI/计分板查询照常",
+            hologramAbi,
+            static_cast<std::uint32_t>(HOLOGLIB_API_VERSION),
+            SidebarManager::getInstance().hologramLayout()
+        );
     }
-    logger.info(
-        "HologramLib 已连接 (ABI 0x{:06X} / 编译期 0x{:06X})",
-        hologramAbi,
-        static_cast<std::uint32_t>(HOLOGLIB_API_VERSION)
-    );
 
     try {
         // 1. 数据迁移（BetterSidebar → MeowSidebar）

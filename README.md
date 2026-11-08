@@ -40,7 +40,7 @@ BDS（Bedrock Dedicated Server）26.60 侧边栏插件，LeviLamina 原生 C++23
 |---|---|
 | BDS | 26.60 |
 | LeviLamina | 26.60.0 |
-| HologramLib | 必需（硬导入），提供 `ISidebar` 协议层；启用时校验运行时 ABI，库比本插件旧就拒绝启用 |
+| HologramLib | 必需（硬导入），提供 `ISidebar` 协议层；接口按库的 `version()` 取，取不到只降级为无侧边栏，不让插件启用失败 |
 | LegacyRemoteCall | 可选（LSE 兼容） |
 | MeowPAPI | 构建时同仓源码依赖；运行时由本插件内嵌部署并托管，若服上已有独立 MeowPAPI 插件则直接连接它 |
 
@@ -283,9 +283,11 @@ python tools/check_tooth.py    # 校验版本、资产地址与解压根目录
 
 - 侧边栏不写服务端计分板：objective 由 HologramLib 按玩家派生，不污染存档，
   也不会和计分板插件抢数据。
-- 启用时先校验 HologramLib 运行时 ABI（`ihologramlib.version()`）再注册任何命令/事件：
-  库比本插件旧直接拒绝启用，日志会写明双方 ABI；对齐时打印
-  `HologramLib 已连接 (ABI 0x012900 / 编译期 0x012900)`。
+- HologramLib 的接口只按 `version()` 取（`hologramlib::abi::sidebar()`，1.37 起库恢复
+  「只追加、不删槽」，不再按虚表槽号猜布局）：取到了打印
+  `HologramLib 已连接 (运行时 ABI 0x012B00 / 编译期 0x012B00): sidebar 已绑定`；
+  取不到（运行时库比插件旧 / 头库错配）则记一条 error，以「无侧边栏」模式继续启用，
+  命令、PAPI、计分板查询都照常——不会因为库版本对不上把整个插件卡成启用失败。
 - 卸载/停用时日志会汇总 `发送 / 内容未变跳过 / 失败 / 移除` 计数，可直接确认去重生效。
 - 兼容性补丁：LeviLamina 26.40+ 把事件类移进 inline namespace 后，MSVC 编译的
   插件与官方 Clang 构建的 `EventId` 哈希不一致；本插件显式特化了

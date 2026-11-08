@@ -17,8 +17,14 @@
 // 26.60: 侧边栏协议层（objective 派生 / 发包 / 回读校验）由 HologramLib 提供
 #include <hologramlib/HologramLib.h>
 
+// 取域接口只走库提供的版本门访问器：1.37.0 起 HologramLib 恢复「只追加、不删槽」，
+// AbiCompat.h 明确不再按槽号猜布局（27/32 号是空保留槽，槽位顺序与 0x012900 一致）。
+#include <hologramlib/AbiCompat.h>
+
 #include <algorithm>
 #include <chrono>
+#include <string_view>
+#include <typeinfo>
 
 // ── LeviLamina 26.40 事件 ID 对齐补丁（侧边栏不刷新根因）──
 // 根因: 26.40 把事件类挪进 inline namespace (ll::event::inline world / ...)，
@@ -43,8 +49,14 @@ constexpr EventIdView getEventId<::ll::event::world::ServerLevelTickEvent> =
 // 本文件只负责"这一拍显示什么"：配置 + 占位符 + 动画索引 → title/lines。
 namespace {
 
-hologramlib::ISidebar& sidebarApi() {
-    return hologramlib::IHologramLib::getInstance().sidebar();
+// 绑定的 ISidebar（bindHologramSidebar() 在主线程写一次，之后只读；nullptr = 不可用）
+hologramlib::ISidebar* gSidebar = nullptr;
+
+// 不要在这里直接写 `IHologramLib::getInstance().sidebar()`：
+// 取接口统一走 bindHologramSidebar()（内部用库的版本门访问器），
+// 拿不到就整体降级为「无侧边栏」，不影响插件其它功能。
+hologramlib::ISidebar* sidebarApi() {
+    return gSidebar;
 }
 
 // getXuid() 在玩家还没完全登录时可能抛异常，统一兜底
@@ -63,6 +75,48 @@ namespace meowsidebar {
 SidebarManager& SidebarManager::getInstance() {
     static SidebarManager instance;
     return instance;
+}
+
+// 按 HologramLib 的 version() 取 ISidebar（只认版本门，不猜槽位）
+//
+// 1.37.0 起库把 27/32 号槽以空接口放回，槽位顺序恢复成与 0x012900 完全一致；
+// 库自己的 AbiCompat.h 也写明「不再按槽号猜接口，跨版本只认 version()」。
+// 因此这里只做一件事：调 hologramlib::abi::sidebar(lib) —— 运行时库比编译期旧时
+// 它返回 nullptr，我们降级为「无侧边栏」；运行时更新（只会在尾部追加）则直接可用。
+bool SidebarManager::bindHologramSidebar() {
+    std::lock_guard<std::mutex> lock(mStateMutex);
+    gSidebar        = nullptr;
+    mHologramAbi    = 0;
+    mHologramLayout = "未绑定";
+
+    try {
+        auto& lib = hologramlib::IHologramLib::getInstance();
+        mHologramAbi = static_cast<std::uint32_t>(lib.version());
+
+        auto* api = hologramlib::abi::sidebar(lib);
+        if (api == nullptr) {
+            mHologramLayout = "sidebar 访问器不可用（运行时库版本低于本插件编译期）";
+            return false;
+        }
+
+        // 可选自检：动态类型里应含 Sidebar。头文件/库版本错配时会在这里暴露，
+        // 而不是把命令作用到别的域上（RTTI 关闭时跳过）。
+        if constexpr (rttiSelfCheckAvailable()) {
+            std::string_view typeName = typeid(*api).name();
+            if (typeName.find("Sidebar") == std::string_view::npos) {
+                mHologramLayout = "RTTI 自检失败（取到的不是侧边栏适配器）";
+                return false;
+            }
+        }
+
+        gSidebar        = api;
+        mHologramLayout = "sidebar 已绑定（按 version() 取接口）";
+        return true;
+    } catch (...) {
+        gSidebar        = nullptr;
+        mHologramLayout = "绑定异常";
+        return false;
+    }
 }
 
 void SidebarManager::ArrayIndexManager::rebuild(json const& arr) {
@@ -335,6 +389,8 @@ static void appendExpandedLines(
 
 void SidebarManager::processPlayer(Player* player) {
     if (!player) return;
+    // 库侧边栏接口没绑上：不渲染也不发包，插件其余功能照常
+    if (sidebarApi() == nullptr) return;
 
     std::string const xuid = xuidOf(player);
     if (xuid.empty()) return;
@@ -416,7 +472,8 @@ void SidebarManager::processPlayer(Player* player) {
     if (sameContent) {
         bool stillShown = true;
         try {
-            stillShown = sidebarApi().isShown(player->getRealName());
+            auto* api   = sidebarApi();
+            stillShown  = api ? api->isShown(player->getRealName()) : false;
         } catch (...) {
             // 查不了就当作还在，别为了自检把包刷爆
             stillShown = true;
@@ -448,7 +505,9 @@ bool SidebarManager::sendSidebarPackets(
     if (!player || lines.empty()) return false;
     try {
         // HologramLib 按玩家名索引（objective 名也由名字派生）
-        return sidebarApi().set(player->getRealName(), title, lines);
+        auto* api = sidebarApi();
+        if (!api) return false;
+        return api->set(player->getRealName(), title, lines);
     } catch (...) {
         // 发包失败不影响服务端 tick，下一拍重试
         return false;
@@ -458,7 +517,7 @@ bool SidebarManager::sendSidebarPackets(
 void SidebarManager::sendRemoveSidebarPackets(Player* player) {
     if (!player) return;
     try {
-        sidebarApi().remove(player->getRealName());
+        if (auto* api = sidebarApi()) api->remove(player->getRealName());
     } catch (...) {
     }
 }
