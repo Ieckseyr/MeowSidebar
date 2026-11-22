@@ -34,3 +34,6 @@ _*.asm
 .idea/
 *.user
 Thumbs.db
+
+# 部署时被占用而改名的旧 dll
+*.dll.old

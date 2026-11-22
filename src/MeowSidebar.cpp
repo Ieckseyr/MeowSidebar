@@ -225,8 +225,7 @@ bool MeowSidebar::load() {
     auto& logger = getSelf().getLogger();
     logger.info("MeowSidebar (C++) loading...");
 
-    // MeowPAPI 链入：内嵌的 MeowPAPI.dll 在 load 阶段释放并加载；
-    // 若服上已经把 MeowPAPI 当独立插件加载，这里直接连上它（多消费者防冲突在静态库里）。
+    // MeowPAPI 链入：内嵌 DLL 在 load 阶段释放加载；已有独立插件则直接连上（防冲突在静态库里）。
     if (meowpapi::ensureLoaded()) {
         gPapiReady.store(true, std::memory_order_relaxed);
         logger.info(
@@ -245,10 +244,8 @@ bool MeowSidebar::enable() {
     auto& logger = getSelf().getLogger();
     logger.info("MeowSidebar (C++) enabling...");
 
-    // 0. HologramLib 前置：只按 version() 取接口，不猜槽位。
-    //    1.37.0 起库恢复「只追加、不删槽」，27/32 号是空保留槽，槽位顺序与 0x012900 一致；
-    //    取接口走 hologramlib::abi::sidebar()（运行时库比编译期旧时返回 nullptr）。
-    //    取不到只降级为「无侧边栏」，不再让整个插件启用失败——命令/PAPI/计分板查询都不依赖它。
+    // 0. HologramLib 前置：只按 version() 取接口、不猜槽位；取不到只降级为「无侧边栏」，
+    //    不让整个插件启用失败（命令/PAPI/计分板查询都不依赖它）。
     std::uint32_t hologramAbi = 0;
     try {
         hologramAbi = static_cast<std::uint32_t>(hologramlib::IHologramLib::getInstance().version());
@@ -280,8 +277,7 @@ bool MeowSidebar::enable() {
         // 2. 加载配置
         ConfigManager::getInstance().load();
 
-        // 3. MeowPAPI：load() 阶段若因部署/加载时序没链上，这里再补一次；
-        //    仍失败则降级运行（占位符保持原文），不阻断侧边栏。
+        // 3. MeowPAPI：load() 没链上就再补一次，仍失败则降级（占位符保持原文）。
         if (!papiReady()) {
             if (meowpapi::ensureLoaded()) {
                 gPapiReady.store(true, std::memory_order_relaxed);
@@ -292,8 +288,7 @@ bool MeowSidebar::enable() {
             }
         }
         if (papiReady()) {
-            // 运行时 ABI 诊断：检测已加载 MeowPAPI.dll 的 ABI 版本/功能位/构建时间戳，
-            // 与编译期 ABI 对照，秒判部署版本
+            // 运行时 ABI/构建时间戳诊断，与编译期 ABI 对照，秒判部署版本
             uint32_t rtAbi     = meowpapi::loadedAbiVersion();
             uint64_t rtBuildTs = meowpapi::loadedBuildTimestamp();
             logger.info(
